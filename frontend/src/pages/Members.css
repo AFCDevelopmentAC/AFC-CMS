@@ -287,3 +287,15 @@
 .btn-secondary:focus-visible, .dept-chip:focus-visible, .modal-close:focus-visible {
   outline: 2px solid #00B4D8; outline-offset: 2px;
 }
+
+/* Securely hide native file inputs while keeping mobile touch triggers active */
+.visually-hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
