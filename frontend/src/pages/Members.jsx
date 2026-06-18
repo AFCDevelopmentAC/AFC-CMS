@@ -437,8 +437,8 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="MEMBER">Active member</option>
-                  <option value="VISITOR">Officer</option>
+                  <option value="MEMBER">Member</option>
+                  <option value="VISITOR">Visitor</option>
                   <option value="NEW CONVERT">New convert</option>
                 </select>
               </div>
