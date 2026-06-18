@@ -110,7 +110,13 @@ export default function Members() {
   const [photoError, setPhotoError] = useState("");
   const fileInputRef = useRef(null);
 
-  const [selectedMember, setSelectedMember] = useState(null);
+  // ── Camera Specific Hookup ────────────────────────────────
+  const [cameraActive, setCameraActive] = useState(false);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+
+  const selectedMember, setSelectedMember = useState(null);
 
   // Admin department override state
   const [showDeptOverride, setShowDeptOverride] = useState(false);
@@ -163,7 +169,16 @@ export default function Members() {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
+  function stopCamera() {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    setCameraActive(false);
+  }
+
   function resetForm() {
+    stopCamera();
     setForm(EMPTY_FORM);
     setFormError("");
     setPhotoPreview("");
@@ -171,71 +186,90 @@ export default function Members() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  // ── Photo upload ─────────────────────────────────────────
- // ── Photo upload ─────────────────────────────────────────
-  async function handlePhotoChange(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    setPhotoError("");
-    if (!file.type.startsWith("image/")) { 
-      setPhotoError("Please choose an image file."); 
-      return; 
-    }
-    if (file.size > 8 * 1024 * 1024) { 
-      setPhotoError("Image is too large (max 8MB)."); 
-      return; 
-    }
-
-    // Revoke previous blob preview if it exists to free memory
-    if (photoPreview && photoPreview.startsWith("blob:")) {
-      URL.revokeObjectURL(photoPreview);
-    }
-
-    // Set temporary local preview
-    const objectUrl = URL.createObjectURL(file);
-    setPhotoPreview(objectUrl);
+  // Helper logic to upload File objects to Cloudinary
+  async function uploadToCloudinary(fileObject) {
     setUploadingPhoto(true);
-
     try {
       const data = new FormData();
-      data.append("file", file);
+      data.append("file", fileObject);
       data.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
-      
       const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: "POST", body: data });
       if (!res.ok) throw new Error("Upload failed");
       const json = await res.json();
-      
-      // Clean up local blob preview now that we have the secure CDN URL
-      URL.revokeObjectURL(objectUrl);
-      
       updateField("PROFILE_PHOTO_URL", json.secure_url);
       setPhotoPreview(json.secure_url);
-    } catch (error) {
+    } catch {
       setPhotoError("Photo upload failed. You can try again or skip it.");
-      
-      // Clear out the failed local preview
-      if (photoPreview && photoPreview.startsWith("blob:")) {
-        URL.revokeObjectURL(photoPreview);
-      }
       setPhotoPreview("");
       updateField("PROFILE_PHOTO_URL", "");
-      if (fileInputRef.current) fileInputRef.current.value = "";
     } finally {
       setUploadingPhoto(false);
     }
   }
 
-  function removePhoto() {
-    // Clean up memory if it happens to be a local preview string
-    if (photoPreview && photoPreview.startsWith("blob:")) {
-      URL.revokeObjectURL(photoPreview);
+  // ── Traditional File Input Handler ────────────────────────
+  async function handlePhotoChange(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoError("");
+    if (!file.type.startsWith("image/")) { setPhotoError("Please choose an image file."); return; }
+    if (file.size > 8 * 1024 * 1024) { setPhotoError("Image is too large (max 8MB)."); return; }
+
+    stopCamera();
+    setPhotoPreview(URL.createObjectURL(file));
+    await uploadToCloudinary(file);
+  }
+
+  // ── Custom Built-in Camera System ────────────────────────
+  async function startCamera() {
+    setPhotoError("");
+    setPhotoPreview("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: "user" }
+      });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraActive(true);
+    } catch (err) {
+      setPhotoError("Could not access your camera. Make sure permissions are allowed.");
     }
+  }
+
+  function captureSnapshot() {
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+
+    // Enforce matching dimensions for clean frame delivery
+    canvas.width = video.videoWidth || 400;
+    canvas.height = video.videoHeight || 400;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const file = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+      setPhotoPreview(URL.createObjectURL(file));
+      stopCamera();
+      await uploadToCloudinary(file);
+    }, "image/jpeg", 0.85);
+  }
+
+  function removePhoto() {
+    stopCamera();
     setPhotoPreview("");
     updateField("PROFILE_PHOTO_URL", "");
     setPhotoError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
+
+  // Clean up device hardware stream on sudden unmounts
+  useEffect(() => {
+    return () => stopCamera();
+  }, []);
 
   // ── Submit new member ────────────────────────────────────
   async function handleSubmit(e) {
@@ -272,11 +306,9 @@ export default function Members() {
     if (!newDept) { setDeptError("Please select a department."); return; }
     setDeptSaving(true);
     try {
-      // Use PUT to update the member's DEPARTMENT_1 via admin override
       await api.put(`/api/members/${selectedMember.S_N}/department`, { department: newDept });
       setShowDeptOverride(false);
       setNewDept("");
-      // Refresh and update selected member
       const res = await api.get("/api/members");
       const updated = res.data;
       setMembers(updated);
@@ -339,35 +371,51 @@ export default function Members() {
 
           <form onSubmit={handleSubmit} className="member-form">
 
-            {/* Photo upload */}
-           <div className="photo-upload-row">
-              <div className="photo-preview">
-                {photoPreview ? <img src={photoPreview} alt="Preview" /> : <span>{initials(form.MEMBER_NAME) || "?"}</span>}
+            {/* Photo capture section */}
+            <div className="photo-upload-row">
+              <div className="photo-preview" style={{ position: "relative", overflow: "hidden" }}>
+                {cameraActive ? (
+                  <video ref={videoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : photoPreview ? (
+                  <img src={photoPreview} alt="Preview" />
+                ) : (
+                  <span>{initials(form.MEMBER_NAME) || "?"}</span>
+                )}
                 {uploadingPhoto && <div className="photo-uploading-overlay">Uploading…</div>}
               </div>
+              
+              {/* Hidden canvas assembly zone for generating image objects */}
+              <canvas ref={canvasRef} style={{ display: "none" }} />
+
               <div className="photo-upload-actions">
-                <label className="photo-upload-label">
-                  <span className="btn-secondary">{photoPreview ? "Change photo" : "Add photo"}</span>
-                  {/* 
-                    Explicitly clearing any implied capture settings with capture={false} 
-                    and forcing accept="image/*" guarantees mobile devices show the action sheet 
-                    to choose between Camera (implicit permissions) and Photo Gallery.
-                  */}
-                  <input 
-                    ref={fileInputRef} 
-                    type="file" 
-                    accept="image/*" 
-                    capture={false}
-                    onChange={handlePhotoChange}
-                  />
-                </label>
-                {photoPreview && <button type="button" className="link-action" onClick={removePhoto}>Remove</button>}
-                <p className="photo-hint">Choose from photo library or use live camera.</p>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                  {cameraActive ? (
+                    <>
+                      <button type="button" className="btn-primary" onClick={captureSnapshot}>Capture</button>
+                      <button type="button" className="btn-secondary" onClick={stopCamera}>Cancel Camera</button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="btn-secondary" onClick={startCamera}>
+                        Take photo
+                      </button>
+                      <label className="photo-upload-label" style={{ margin: 0 }}>
+                        <span className="btn-secondary">Upload file</span>
+                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} hidden />
+                      </label>
+                    </>
+                  )}
+                  {photoPreview && !cameraActive && (
+                    <button type="button" className="link-action" onClick={removePhoto}>Remove</button>
+                  )}
+                </div>
+                <p className="photo-hint">Use an inline camera snapshot or transfer from a file location.</p>
                 {photoError && <p className="photo-error">{photoError}</p>}
               </div>
             </div>
 
             <div className="form-grid">
+
               {/* Personal */}
               <div className="form-section-label span-3">Personal details</div>
 
@@ -375,7 +423,7 @@ export default function Members() {
                 <label htmlFor="MEMBER_NAME">Full name *</label>
                 <input id="MEMBER_NAME" value={form.MEMBER_NAME}
                   onChange={(e) => updateField("MEMBER_NAME", e.target.value)}
-                  placeholder="e.g. Omondi Timon" required />
+                  placeholder="e.g. Joseph Gichimu" required />
               </div>
 
               <div className="form-field">
@@ -413,7 +461,7 @@ export default function Members() {
                   <select id="SUNDAY_SCHOOL_CLASS" value={form.SUNDAY_SCHOOL_CLASS}
                     onChange={(e) => updateField("SUNDAY_SCHOOL_CLASS", e.target.value)}>
                     <option value="">Select</option>
-                    <option value="JUNIOR">Junior (3-8 yrs)</option>
+                    <option value="JUNIOR">Junior (3–8 yrs)</option>
                     <option value="SENIOR">Senior (9–12 yrs)</option>
                   </select>
                 </div>
@@ -478,8 +526,8 @@ export default function Members() {
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
                   <option value="MEMBER">Member</option>
-                  <option value="VISITOR">Visitor</option>
                   <option value="NEW CONVERT">New convert</option>
+                  <option value="VISITOR">Visitor</option>
                 </select>
               </div>
 
@@ -582,9 +630,7 @@ export default function Members() {
         </div>
       )}
 
-      {/* Members list toggle */}
-      {error && <div className="banner banner-error">{error}</div>}
-
+      {/* Members list block */}
       {!showList ? (
         <div className="members-summary-cta">
           <p className="cta-hint">
