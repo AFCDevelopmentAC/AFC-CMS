@@ -358,8 +358,7 @@ export default function Members() {
                     type="file" 
                     accept="image/*" 
                     capture={false}
-                    onChange={handlePhotoChange} 
-                    hidden 
+                    onChange={handlePhotoChange}
                   />
                 </label>
                 {photoPreview && <button type="button" className="link-action" onClick={removePhoto}>Remove</button>}
