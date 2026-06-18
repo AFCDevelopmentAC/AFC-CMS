@@ -335,7 +335,7 @@ export default function Members() {
                 <label htmlFor="MEMBER_NAME">Full name *</label>
                 <input id="MEMBER_NAME" value={form.MEMBER_NAME}
                   onChange={(e) => updateField("MEMBER_NAME", e.target.value)}
-                  placeholder="e.g. Joseph Gichimu" required />
+                  placeholder="e.g. Omondi Timon" required />
               </div>
 
               <div className="form-field">
@@ -437,7 +437,7 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="MEMBER">Active member</option>
+                  <option value="MEMBER">Member</option>
                   <option value="NEW CONVERT">New convert</option>
                   <option value="VISITOR">Visitor</option>
                 </select>
