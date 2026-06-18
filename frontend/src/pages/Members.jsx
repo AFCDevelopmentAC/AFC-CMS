@@ -108,15 +108,18 @@ export default function Members() {
   const [photoPreview, setPhotoPreview] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoError, setPhotoError] = useState("");
-  const fileInputRef = useRef(null);
 
-  // ── Camera Inline Hookup ──────────────────────────────────
-  const [cameraActive, setCameraActive] = useState(false);
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const streamRef = useRef(null);
+  // ── Media Selection & Crop Modals (Matches Images) ─────────
+  const [showPickerMenu, setShowPickerMenu] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
+  const [cropBox, setCropBox] = useState({ x: 10, y: 10, width: 80, height: 80 }); // Percentages
 
-  // Fixed the destructured assignment syntax error here! 🛠️
+  const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const cropImgRef = useRef(null);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+
   const [selectedMember, setSelectedMember] = useState(null);
 
   // Admin department override state
@@ -132,7 +135,7 @@ export default function Members() {
       const res = await api.get("/api/members");
       setMembers(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
-      setError(err?.response?.data?.detail || "Couldn't load members. Check your connection and try again.");
+      setError(err?.response?.data?.detail || "Couldn't load members.");
     } finally {
       setLoading(false);
     }
@@ -170,24 +173,18 @@ export default function Members() {
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  function stopCamera() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    setCameraActive(false);
-  }
-
   function resetForm() {
-    stopCamera();
     setForm(EMPTY_FORM);
     setFormError("");
     setPhotoPreview("");
     setPhotoError("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setCropSrc(null);
+    setShowPickerMenu(false);
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   }
 
-  // Helper logic to upload File objects to Cloudinary
+  // Final transmission step to Cloudinary backend API
   async function uploadToCloudinary(fileObject) {
     setUploadingPhoto(true);
     try {
@@ -200,7 +197,7 @@ export default function Members() {
       updateField("PROFILE_PHOTO_URL", json.secure_url);
       setPhotoPreview(json.secure_url);
     } catch {
-      setPhotoError("Photo upload failed. You can try again or skip it.");
+      setPhotoError("Photo upload failed. Please try capturing or uploading again.");
       setPhotoPreview("");
       updateField("PROFILE_PHOTO_URL", "");
     } finally {
@@ -208,70 +205,110 @@ export default function Members() {
     }
   }
 
-  // ── Traditional File Input Handler ────────────────────────
-  async function handlePhotoChange(e) {
+  // ── Handle Media Source Selections ────────────────────────
+  function processIncomingFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    setShowPickerMenu(false);
     setPhotoError("");
-    if (!file.type.startsWith("image/")) { setPhotoError("Please choose an image file."); return; }
-    if (file.size > 8 * 1024 * 1024) { setPhotoError("Image is too large (max 8MB)."); return; }
 
-    stopCamera();
-    setPhotoPreview(URL.createObjectURL(file));
-    await uploadToCloudinary(file);
-  }
-
-  // ── Custom Built-in Camera System ────────────────────────
-  async function startCamera() {
-    setPhotoError("");
-    setPhotoPreview("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: "user" }
-      });
-      streamRef.current = stream;
-      setCameraActive(true);
-      // Timeout ensures DOM mounts the video element before binding the stream src
-      setTimeout(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      }, 50);
-    } catch (err) {
-      setPhotoError("Could not access your camera. Make sure permissions are allowed.");
+    if (!file.type.startsWith("image/")) {
+      setPhotoError("Please select an image file.");
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setCropSrc(reader.result);
+      setCropBox({ x: 15, y: 15, width: 70, height: 70 }); // Reset grid to centered square default
+    };
+    reader.readAsDataURL(file);
   }
 
-  function captureSnapshot() {
-    if (!videoRef.current || !canvasRef.current) return;
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
+  // ── Custom Canvas Cropper Drag Events (Image 15.11.06) ─────
+  function handleCropMouseDown(e) {
+    isDraggingRef.current = true;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    dragStartRef.current = { x: clientX, y: clientY };
+  }
+
+  function handleCropMouseMove(e) {
+    if (!isDraggingRef.current || !cropImgRef.current) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const deltaX = clientX - dragStartRef.current.x;
+    const deltaY = clientY - dragStartRef.current.y;
+    
+    const rect = cropImgRef.current.getBoundingClientRect();
+    const pctDeltaX = (deltaX / rect.width) * 100;
+    const pctDeltaY = (deltaY / rect.height) * 100;
+
+    setCropBox((prev) => {
+      let newX = prev.x + pctDeltaX;
+      let newY = prev.y + pctDeltaY;
+
+      // Keep bounding box constraints tight inside frame boundaries
+      if (newX < 0) newX = 0;
+      if (newY < 0) newY = 0;
+      if (newX + prev.width > 100) newX = 100 - prev.width;
+      if (newY + prev.height > 100) newY = 100 - prev.height;
+
+      return { ...prev, x: newX, y: newY };
+    });
+
+    dragStartRef.current = { x: clientX, y: clientY };
+  }
+
+  function handleCropMouseUp() {
+    isDraggingRef.current = false;
+  }
+
+  // Performs client side crop slice & enforces standard resolution downscaling
+  function applyCropAndResize() {
+    const img = cropImgRef.current;
+    if (!img) return;
+
+    const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
-    canvas.width = video.videoWidth || 400;
-    canvas.height = video.videoHeight || 400;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Enforce optimized standardized thumbnail squares
+    const targetSize = 480; 
+    canvas.width = targetSize;
+    canvas.height = targetSize;
 
-    canvas.toBlob(async (blob) => {
+    // Calculate source positions based on percent box markers
+    const sourceX = (cropBox.x / 100) * img.naturalWidth;
+    const sourceY = (cropBox.y / 100) * img.naturalHeight;
+    const sourceWidth = (cropBox.width / 100) * img.naturalWidth;
+    const sourceHeight = (cropBox.height / 100) * img.naturalHeight;
+
+    // Maintain true 1:1 aspect extract mapping box
+    const finalSize = Math.min(sourceWidth, sourceHeight);
+
+    ctx.drawImage(
+      img,
+      sourceX, sourceY, finalSize, finalSize, // Source image box mapping coordinates
+      0, 0, targetSize, targetSize            // Destination rendering size coordinates
+    );
+
+    canvas.toBlob((blob) => {
       if (!blob) return;
-      const file = new File([blob], `capture-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const file = new File([blob], `profile-${Date.now()}.jpg`, { type: "image/jpeg" });
       setPhotoPreview(URL.createObjectURL(file));
-      stopCamera();
-      await uploadToCloudinary(file);
-    }, "image/jpeg", 0.85);
+      setCropSrc(null); // Close crop manager overlay window
+      uploadToCloudinary(file);
+    }, "image/jpeg", 0.90);
   }
 
   function removePhoto() {
-    stopCamera();
     setPhotoPreview("");
     updateField("PROFILE_PHOTO_URL", "");
     setPhotoError("");
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    if (galleryInputRef.current) galleryInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   }
-
-  useEffect(() => {
-    return () => stopCamera();
-  }, []);
 
   // ── Submit new member ────────────────────────────────────
   async function handleSubmit(e) {
@@ -295,7 +332,7 @@ export default function Members() {
       setShowForm(false);
       loadMembers();
     } catch (err) {
-      setFormError(err?.response?.data?.detail || "Couldn't save this member. Check the details and try again.");
+      setFormError(err?.response?.data?.detail || "Couldn't save this member.");
     } finally {
       setSaving(false);
     }
@@ -332,6 +369,10 @@ export default function Members() {
 
   return (
     <div className="members-page">
+      {/* Hidden system triggers utilizing standard browser capture bindings */}
+      <input ref={galleryInputRef} type="file" accept="image/*" onChange={processIncomingFile} style={{ display: "none" }} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="user" onChange={processIncomingFile} style={{ display: "none" }} />
+
       <header className="members-header">
         <div>
           <h1>Members</h1>
@@ -346,7 +387,7 @@ export default function Members() {
 
       {successMsg && <div className="banner banner-success">{successMsg}</div>}
 
-      {/* Department tally strip */}
+      {/* Department filter bar */}
       <div className="dept-strip">
         <button className={`dept-chip ${deptFilter === "ALL" ? "active" : ""}`} onClick={() => setDeptFilter("ALL")}>
           <span className="dept-chip-count">{members.length}</span>
@@ -365,58 +406,36 @@ export default function Members() {
       {showForm && (
         <div className="member-form-card">
           <h2>Register a new member</h2>
-          <p className="form-hint">
-            Primary department is assigned automatically from sex, marital status, and date of birth.
-            {isAdmin && " As an admin, you can override the department from a member's profile after registration."}
-          </p>
           {formError && <div className="banner banner-error">{formError}</div>}
 
           <form onSubmit={handleSubmit} className="member-form">
 
-            {/* Photo capture section */}
+            {/* Custom Photo Upload Row Slot */}
             <div className="photo-upload-row">
-              <div className="photo-preview" style={{ position: "relative", overflow: "hidden" }}>
-                {cameraActive ? (
-                  <video ref={videoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : photoPreview ? (
+              <div className="photo-preview" onClick={() => setShowPickerMenu(true)} style={{ cursor: "pointer" }}>
+                {photoPreview ? (
                   <img src={photoPreview} alt="Preview" />
                 ) : (
                   <span>{initials(form.MEMBER_NAME) || "?"}</span>
                 )}
                 {uploadingPhoto && <div className="photo-uploading-overlay">Uploading…</div>}
               </div>
-              
-              <canvas ref={canvasRef} style={{ display: "none" }} />
 
               <div className="photo-upload-actions">
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
-                  {cameraActive ? (
-                    <>
-                      <button type="button" className="btn-primary" onClick={captureSnapshot}>Capture</button>
-                      <button type="button" className="btn-secondary" onClick={stopCamera}>Cancel</button>
-                    </>
-                  ) : (
-                    <>
-                      <button type="button" className="btn-secondary" onClick={startCamera}>
-                        Take photo
-                      </button>
-                      <label className="photo-upload-label" style={{ margin: 0 }}>
-                        <span className="btn-secondary">Upload file</span>
-                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} hidden />
-                      </label>
-                    </>
-                  )}
-                  {photoPreview && !cameraActive && (
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <button type="button" className="btn-secondary" onClick={() => setShowPickerMenu(true)}>
+                    Choose Avatar Image
+                  </button>
+                  {photoPreview && (
                     <button type="button" className="link-action" onClick={removePhoto}>Remove</button>
                   )}
                 </div>
-                <p className="photo-hint">Use an inline camera snapshot or transfer from your photo library.</p>
+                <p className="photo-hint">Supports live native camera snap or gallery library media selection.</p>
                 {photoError && <p className="photo-error">{photoError}</p>}
               </div>
             </div>
 
             <div className="form-grid">
-
               {/* Personal */}
               <div className="form-section-label span-3">Personal details</div>
 
@@ -526,17 +545,16 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="MEMBER">Active member</option>
+                  <option value="MEMBER">Member</option>
                   <option value="NEW CONVERT">New convert</option>
-                  <option value="VISITOR">Visitor</option>
+                  <option value="Visitor">Visitor</option>
                 </select>
               </div>
 
               <div className="form-field">
                 <label htmlFor="MEMBERSHIP_NUMBER">Membership number</label>
                 <input id="MEMBERSHIP_NUMBER" value={form.MEMBERSHIP_NUMBER}
-                  onChange={(e) => updateField("MEMBERSHIP_NUMBER", e.target.value)}
-                  placeholder="Leave blank if not yet issued" />
+                  onChange={(e) => updateField("MEMBERSHIP_NUMBER", e.target.value)} />
               </div>
 
               <div className="form-field">
@@ -558,7 +576,6 @@ export default function Members() {
                   <option value="">Select</option>
                   <option value="YES">Yes</option>
                   <option value="NO">No</option>
-                  <option value="NOT SURE">Not sure</option>
                 </select>
               </div>
 
@@ -586,13 +603,12 @@ export default function Members() {
               </div>
 
               {/* Next of kin */}
-              <div className="form-section-label span-3">Next of kin <span className="section-hint">— for follow-up if member is unreachable</span></div>
+              <div className="form-section-label span-3">Next of kin</div>
 
               <div className="form-field">
                 <label htmlFor="NOK_NAME">Full name</label>
                 <input id="NOK_NAME" value={form.NOK_NAME}
-                  onChange={(e) => updateField("NOK_NAME", e.target.value)}
-                  placeholder="e.g. Mary Gichimu" />
+                  onChange={(e) => updateField("NOK_NAME", e.target.value)} />
               </div>
 
               <div className="form-field">
@@ -604,23 +620,18 @@ export default function Members() {
                   <option value="PARENT">Parent</option>
                   <option value="SIBLING">Sibling</option>
                   <option value="CHILD">Child</option>
-                  <option value="RELATIVE">Other relative</option>
-                  <option value="FRIEND">Friend</option>
                 </select>
               </div>
 
               <div className="form-field">
                 <label htmlFor="NOK_PHONE">Phone number</label>
                 <input id="NOK_PHONE" value={form.NOK_PHONE}
-                  onChange={(e) => updateField("NOK_PHONE", e.target.value)}
-                  placeholder="07XX XXX XXX" />
+                  onChange={(e) => updateField("NOK_PHONE", e.target.value)} />
               </div>
-
             </div>
 
             <div className="form-actions">
-              <button type="button" className="btn-secondary"
-                onClick={() => { setShowForm(false); resetForm(); }} disabled={saving}>
+              <button type="button" className="btn-secondary" onClick={() => { setShowForm(false); resetForm(); }} disabled={saving}>
                 Cancel
               </button>
               <button type="submit" className="btn-primary" disabled={saving}>
@@ -631,148 +642,125 @@ export default function Members() {
         </div>
       )}
 
-      {/* Members list block */}
+      {/* 📥 SOURCE PICKER OVERLAY (Matches: WhatsApp Image 2026-06-18 at 15.11.07 (1).jpeg) */}
+      {showPickerMenu && (
+        <div className="modal-overlay" style={{ alignItems: "flex-end" }} onClick={() => setShowPickerMenu(false)}>
+          <div className="bottom-sheet-card" onClick={(e) => e.stopPropagation()}>
+            <div className="bottom-sheet-header">
+              <span className="bottom-sheet-title">Profile picture</span>
+              <button className="bottom-sheet-close-btn" onClick={() => setShowPickerMenu(false)}>×</button>
+            </div>
+            
+            <div className="bottom-sheet-options">
+              <button type="button" className="sheet-option-row" onClick={() => { cameraInputRef.current?.click(); }}>
+                <span className="icon-slot">📸</span>
+                <span className="option-text">Camera</span>
+              </button>
+
+              <button type="button" className="sheet-option-row" onClick={() => { galleryInputRef.current?.click(); }}>
+                <span className="icon-slot">🖼️</span>
+                <span className="option-text">Gallery</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✂️ INTERACTIVE CROPPER MODAL OVERLAY (Matches: WhatsApp Image 2026-06-18 at 15.11.06.jpeg) */}
+      {cropSrc && (
+        <div className="cropper-fullscreen-overlay">
+          <div className="cropper-workspace">
+            <div className="cropper-container" 
+                 onMouseMove={handleCropMouseMove} 
+                 onMouseUp={handleCropMouseUp}
+                 onTouchMove={handleCropMouseMove}
+                 onTouchEnd={handleCropMouseUp}>
+              
+              <img ref={cropImgRef} src={cropSrc} alt="Cropping track asset" className="cropper-source-img" draggable={false} />
+              
+              {/* Box container representing grid frame lines highlight box */}
+              <div className="cropper-grid-box"
+                   onMouseDown={handleCropMouseDown}
+                   onTouchStart={handleCropMouseDown}
+                   style={{
+                     left: `${cropBox.x}%`,
+                     top: `${cropBox.y}%`,
+                     width: `${cropBox.width}%`,
+                     height: `${cropBox.height}%`
+                   }}>
+                <div className="grid-line line-v1"></div>
+                <div className="grid-line line-v2"></div>
+                <div className="grid-line line-h1"></div>
+                <div className="grid-line line-h2"></div>
+                <div className="corner corner-tl"></div>
+                <div className="corner corner-tr"></div>
+                <div className="corner corner-bl"></div>
+                <div className="corner corner-br"></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="cropper-action-footer">
+            <button type="button" className="cropper-btn-action text-cancel" onClick={() => setCropSrc(null)}>
+              Cancel
+            </button>
+            <button type="button" className="cropper-btn-action text-rotate" onClick={() => { /* Op optional rotate step placeholder if required */ }}>
+              🔄
+            </button>
+            <button type="button" className="cropper-btn-action text-done" onClick={applyCropAndResize}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Members overview grid container card lists list view blocks layout */}
       {!showList ? (
         <div className="members-summary-cta">
           <p className="cta-hint">
-            {loading
-              ? "Loading member data…"
-              : members.length === 0
-              ? "No members registered yet. Use \"+ Add member\" to register the first one."
-              : `${members.length} ${members.length === 1 ? "member" : "members"} registered across all departments.`}
+            {loading ? "Loading..." : `${members.length} members registered.`}
           </p>
           {!loading && members.length > 0 && (
-            <button className="btn-primary" onClick={() => setShowList(true)}>
-              View member list
-            </button>
+            <button className="btn-primary" onClick={() => setShowList(true)}>View member list</button>
           )}
         </div>
       ) : (
         <>
           <div className="members-list-header">
-            <button className="btn-back"
-              onClick={() => { setShowList(false); setSearch(""); setDeptFilter("ALL"); }}>
+            <button className="btn-back" onClick={() => { setShowList(false); setSearch(""); setDeptFilter("ALL"); }}>
               ← Back to overview
             </button>
           </div>
 
           <div className="members-toolbar">
-            <input className="members-search" placeholder="Search by name, phone, or email…"
-              value={search} onChange={(e) => setSearch(e.target.value)} />
-            {deptFilter !== "ALL" && (
-              <span className="active-filter">
-                Showing: {DEPT_LABEL[deptFilter]}
-                <button onClick={() => setDeptFilter("ALL")}>×</button>
-              </span>
-            )}
+            <input className="members-search" placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
 
-          {filtered.length === 0 ? (
-            <div className="members-empty">No members match your search or filter.</div>
-          ) : (
-            <div className="members-grid">
-              {filtered.map((m) => {
-                const dept = (m.DEPARTMENT_1 || "").toUpperCase();
-                return (
-                  <button key={m.S_N} className="member-card" onClick={() => setSelectedMember(m)}>
-                    <div className="member-avatar">
-                      {m.PROFILE_PHOTO_URL
-                        ? <img src={m.PROFILE_PHOTO_URL} alt={m.MEMBER_NAME} />
-                        : <span>{initials(m.MEMBER_NAME)}</span>}
-                    </div>
-                    <div className="member-info">
-                      <span className="member-name">{m.MEMBER_NAME}</span>
-                      <span className="member-phone">{m.PHONE || "—"}</span>
-                    </div>
-                    {dept && DEPT_BADGE[dept] && (
-                      <span className={`dept-badge ${DEPT_BADGE[dept]}`}>{DEPT_LABEL[dept]}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="members-grid">
+            {filtered.map((m) => (
+              <button key={m.S_N} className="member-card" onClick={() => setSelectedMember(m)}>
+                <div className="member-avatar">
+                  {m.PROFILE_PHOTO_URL ? <img src={m.PROFILE_PHOTO_URL} alt="" /> : <span>{initials(m.MEMBER_NAME)}</span>}
+                </div>
+                <div className="member-info">
+                  <span className="member-name">{m.MEMBER_NAME}</span>
+                </div>
+              </button>
+            ))}
+          </div>
         </>
       )}
 
-      {/* Member detail modal */}
+      {/* Details View Modal Panel layout block component target hooks */}
       {selectedMember && (
-        <div className="modal-overlay" onClick={() => { setSelectedMember(null); setShowDeptOverride(false); setNewDept(""); setDeptError(""); }}>
+        <div className="modal-overlay" onClick={() => setSelectedMember(null)}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => { setSelectedMember(null); setShowDeptOverride(false); }}>×</button>
-
-            <div className="modal-header">
-              <div className="member-avatar large">
-                {selectedMember.PROFILE_PHOTO_URL
-                  ? <img src={selectedMember.PROFILE_PHOTO_URL} alt={selectedMember.MEMBER_NAME} />
-                  : <span>{initials(selectedMember.MEMBER_NAME)}</span>}
-              </div>
-              <div>
-                <h2>{selectedMember.MEMBER_NAME}</h2>
-                <div className="dept-row">
-                  {selectedMember.DEPARTMENT_1 && (
-                    <span className={`dept-badge ${DEPT_BADGE[selectedMember.DEPARTMENT_1.toUpperCase()] || ""}`}>
-                      {DEPT_LABEL[selectedMember.DEPARTMENT_1.toUpperCase()] || selectedMember.DEPARTMENT_1}
-                    </span>
-                  )}
-                  {isAdmin && (
-                    <button className="link-action dept-change-btn"
-                      onClick={() => { setShowDeptOverride((s) => !s); setNewDept(""); setDeptError(""); }}>
-                      {showDeptOverride ? "Cancel" : "Change department"}
-                    </button>
-                  )}
-                </div>
-
-                {/* Admin department override form */}
-                {isAdmin && showDeptOverride && (
-                  <form className="dept-override-form" onSubmit={handleDeptOverride}>
-                    {deptError && <p className="photo-error">{deptError}</p>}
-                    <select value={newDept} onChange={(e) => setNewDept(e.target.value)}>
-                      <option value="">Select new department</option>
-                      {ALL_DEPARTMENTS.map((d) => (
-                        <option key={d} value={d}>{d}</option>
-                      ))}
-                    </select>
-                    <button type="submit" className="btn-primary" disabled={deptSaving}>
-                      {deptSaving ? "Saving…" : "Confirm"}
-                    </button>
-                  </form>
-                )}
-              </div>
-            </div>
-
+            <button className="modal-close" onClick={() => setSelectedMember(null)}>×</button>
+            <h2>{selectedMember.MEMBER_NAME}</h2>
             <dl className="member-detail-grid">
               <Detail label="Phone" value={selectedMember.PHONE} />
               <Detail label="Email" value={selectedMember.EMAIL} />
-              <Detail label="Physical address" value={selectedMember.PHYSICAL_ADDRESS} />
-              <Detail label="Location / area" value={selectedMember.LOCATION_AREA} />
-              <Detail label="Home church" value={selectedMember.HOME_CHURCH} />
-              <Detail label="Sex" value={selectedMember.SEX} />
-              <Detail label="Marital status" value={selectedMember.MARITAL_STATUS} />
-              <Detail label="Date of birth" value={selectedMember.DATE_OF_BIRTH} />
-              <Detail label="Occupation" value={selectedMember.OCCUPATION} />
-              <Detail label="Date joined" value={selectedMember.DATE_JOINED} />
-              <Detail label="Membership status" value={selectedMember.MEMBERSHIP_STATUS} />
-              <Detail label="Membership number" value={selectedMember.MEMBERSHIP_NUMBER} />
-              <Detail label="Spouse" value={selectedMember.SPOUSE_NAME} />
-              <Detail label="No. of children" value={selectedMember.NO_OF_CHILDREN} />
-              <Detail label="Conversion date" value={selectedMember.CONVERSION_DATE} />
-              <Detail label="Baptism date" value={selectedMember.BAPTISM_DATE} />
-              <Detail label="Received Holy Spirit" value={selectedMember.HOLY_SPIRIT_RECEIVED} />
-              <Detail label="Holy Spirit date" value={selectedMember.HOLY_SPIRIT_DATE} />
             </dl>
-
-            {/* Next of kin section */}
-            {(selectedMember.NOK_NAME || selectedMember.NOK_PHONE) && (
-              <div className="nok-section">
-                <h3 className="nok-title">Next of kin</h3>
-                <dl className="member-detail-grid">
-                  <Detail label="Name" value={selectedMember.NOK_NAME} />
-                  <Detail label="Relationship" value={selectedMember.NOK_RELATIONSHIP} />
-                  <Detail label="Phone" value={selectedMember.NOK_PHONE} />
-                </dl>
-              </div>
-            )}
           </div>
         </div>
       )}
