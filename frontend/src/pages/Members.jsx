@@ -110,13 +110,14 @@ export default function Members() {
   const [photoError, setPhotoError] = useState("");
   const fileInputRef = useRef(null);
 
-  // ── Camera Specific Hookup ────────────────────────────────
+  // ── Camera Inline Hookup ──────────────────────────────────
   const [cameraActive, setCameraActive] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
 
-  const selectedMember, setSelectedMember = useState(null);
+  // Fixed the destructured assignment syntax error here! 🛠️
+  const [selectedMember, setSelectedMember] = useState(null);
 
   // Admin department override state
   const [showDeptOverride, setShowDeptOverride] = useState(false);
@@ -229,10 +230,13 @@ export default function Members() {
         video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: "user" }
       });
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
       setCameraActive(true);
+      // Timeout ensures DOM mounts the video element before binding the stream src
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, 50);
     } catch (err) {
       setPhotoError("Could not access your camera. Make sure permissions are allowed.");
     }
@@ -244,7 +248,6 @@ export default function Members() {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
 
-    // Enforce matching dimensions for clean frame delivery
     canvas.width = video.videoWidth || 400;
     canvas.height = video.videoHeight || 400;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -266,7 +269,6 @@ export default function Members() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  // Clean up device hardware stream on sudden unmounts
   useEffect(() => {
     return () => stopCamera();
   }, []);
@@ -384,7 +386,6 @@ export default function Members() {
                 {uploadingPhoto && <div className="photo-uploading-overlay">Uploading…</div>}
               </div>
               
-              {/* Hidden canvas assembly zone for generating image objects */}
               <canvas ref={canvasRef} style={{ display: "none" }} />
 
               <div className="photo-upload-actions">
@@ -392,7 +393,7 @@ export default function Members() {
                   {cameraActive ? (
                     <>
                       <button type="button" className="btn-primary" onClick={captureSnapshot}>Capture</button>
-                      <button type="button" className="btn-secondary" onClick={stopCamera}>Cancel Camera</button>
+                      <button type="button" className="btn-secondary" onClick={stopCamera}>Cancel</button>
                     </>
                   ) : (
                     <>
@@ -409,7 +410,7 @@ export default function Members() {
                     <button type="button" className="link-action" onClick={removePhoto}>Remove</button>
                   )}
                 </div>
-                <p className="photo-hint">Use an inline camera snapshot or transfer from a file location.</p>
+                <p className="photo-hint">Use an inline camera snapshot or transfer from your photo library.</p>
                 {photoError && <p className="photo-error">{photoError}</p>}
               </div>
             </div>
@@ -525,7 +526,7 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="MEMBER">Member</option>
+                  <option value="MEMBER">Active member</option>
                   <option value="NEW CONVERT">New convert</option>
                   <option value="VISITOR">Visitor</option>
                 </select>
