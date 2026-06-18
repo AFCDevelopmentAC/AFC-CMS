@@ -642,7 +642,7 @@ export default function Members() {
         </div>
       )}
 
-      {/* 📥 SOURCE PICKER OVERLAY (Matches: WhatsApp Image 2026-06-18 at 15.11.07 (1).jpeg) */}
+      {/* 📥 SOURCE PICKER OVERLAY */}
       {showPickerMenu && (
         <div className="modal-overlay" style={{ alignItems: "flex-end" }} onClick={() => setShowPickerMenu(false)}>
           <div className="bottom-sheet-card" onClick={(e) => e.stopPropagation()}>
@@ -666,7 +666,7 @@ export default function Members() {
         </div>
       )}
 
-      {/* ✂️ INTERACTIVE CROPPER MODAL OVERLAY (Matches: WhatsApp Image 2026-06-18 at 15.11.06.jpeg) */}
+      {/* ✂️ INTERACTIVE CROPPER MODAL OVERLAY */}
       {cropSrc && (
         <div className="cropper-fullscreen-overlay">
           <div className="cropper-workspace">
