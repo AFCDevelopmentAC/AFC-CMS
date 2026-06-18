@@ -172,34 +172,65 @@ export default function Members() {
   }
 
   // ── Photo upload ─────────────────────────────────────────
+ // ── Photo upload ─────────────────────────────────────────
   async function handlePhotoChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    
     setPhotoError("");
-    if (!file.type.startsWith("image/")) { setPhotoError("Please choose an image file."); return; }
-    if (file.size > 8 * 1024 * 1024) { setPhotoError("Image is too large (max 8MB)."); return; }
+    if (!file.type.startsWith("image/")) { 
+      setPhotoError("Please choose an image file."); 
+      return; 
+    }
+    if (file.size > 8 * 1024 * 1024) { 
+      setPhotoError("Image is too large (max 8MB)."); 
+      return; 
+    }
 
-    setPhotoPreview(URL.createObjectURL(file));
+    // Revoke previous blob preview if it exists to free memory
+    if (photoPreview && photoPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(photoPreview);
+    }
+
+    // Set temporary local preview
+    const objectUrl = URL.createObjectURL(file);
+    setPhotoPreview(objectUrl);
     setUploadingPhoto(true);
+
     try {
       const data = new FormData();
       data.append("file", file);
       data.append("upload_preset", CLOUDINARY_UPLOAD_PRESET);
+      
       const res = await fetch(CLOUDINARY_UPLOAD_URL, { method: "POST", body: data });
       if (!res.ok) throw new Error("Upload failed");
       const json = await res.json();
+      
+      // Clean up local blob preview now that we have the secure CDN URL
+      URL.revokeObjectURL(objectUrl);
+      
       updateField("PROFILE_PHOTO_URL", json.secure_url);
       setPhotoPreview(json.secure_url);
-    } catch {
+    } catch (error) {
       setPhotoError("Photo upload failed. You can try again or skip it.");
+      
+      // Clear out the failed local preview
+      if (photoPreview && photoPreview.startsWith("blob:")) {
+        URL.revokeObjectURL(photoPreview);
+      }
       setPhotoPreview("");
       updateField("PROFILE_PHOTO_URL", "");
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } finally {
       setUploadingPhoto(false);
     }
   }
 
   function removePhoto() {
+    // Clean up memory if it happens to be a local preview string
+    if (photoPreview && photoPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(photoPreview);
+    }
     setPhotoPreview("");
     updateField("PROFILE_PHOTO_URL", "");
     setPhotoError("");
@@ -309,7 +340,7 @@ export default function Members() {
           <form onSubmit={handleSubmit} className="member-form">
 
             {/* Photo upload */}
-            <div className="photo-upload-row">
+           <div className="photo-upload-row">
               <div className="photo-preview">
                 {photoPreview ? <img src={photoPreview} alt="Preview" /> : <span>{initials(form.MEMBER_NAME) || "?"}</span>}
                 {uploadingPhoto && <div className="photo-uploading-overlay">Uploading…</div>}
@@ -317,17 +348,27 @@ export default function Members() {
               <div className="photo-upload-actions">
                 <label className="photo-upload-label">
                   <span className="btn-secondary">{photoPreview ? "Change photo" : "Add photo"}</span>
-                  {/* No capture attribute — lets the user choose between camera and gallery */}
-                  <input ref={fileInputRef} type="file" accept="image/*" onChange={handlePhotoChange} hidden />
+                  {/* 
+                    Explicitly clearing any implied capture settings with capture={false} 
+                    and forcing accept="image/*" guarantees mobile devices show the action sheet 
+                    to choose between Camera (implicit permissions) and Photo Gallery.
+                  */}
+                  <input 
+                    ref={fileInputRef} 
+                    type="file" 
+                    accept="image/*" 
+                    capture={false}
+                    onChange={handlePhotoChange} 
+                    hidden 
+                  />
                 </label>
                 {photoPreview && <button type="button" className="link-action" onClick={removePhoto}>Remove</button>}
-                <p className="photo-hint">Opens camera or photo gallery. Optional.</p>
+                <p className="photo-hint">Choose from photo library or use live camera.</p>
                 {photoError && <p className="photo-error">{photoError}</p>}
               </div>
             </div>
 
             <div className="form-grid">
-
               {/* Personal */}
               <div className="form-section-label span-3">Personal details</div>
 
