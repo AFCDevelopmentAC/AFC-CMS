@@ -373,8 +373,8 @@ export default function Members() {
                   <select id="SUNDAY_SCHOOL_CLASS" value={form.SUNDAY_SCHOOL_CLASS}
                     onChange={(e) => updateField("SUNDAY_SCHOOL_CLASS", e.target.value)}>
                     <option value="">Select</option>
-                    <option value="JUNIOR">Junior (0–7 yrs)</option>
-                    <option value="SENIOR">Senior (8–12 yrs)</option>
+                    <option value="JUNIOR">Junior (3-8 yrs)</option>
+                    <option value="SENIOR">Senior (9–12 yrs)</option>
                   </select>
                 </div>
               )}
@@ -437,10 +437,9 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="ACTIVE MEMBER">Active member</option>
-                  <option value="OFFICER">Officer</option>
+                  <option value="MEMBER">Active member</option>
+                  <option value="VISITOR">Officer</option>
                   <option value="NEW CONVERT">New convert</option>
-                  <option value="INACTIVE">Inactive</option>
                 </select>
               </div>
 
