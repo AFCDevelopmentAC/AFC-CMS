@@ -1,0 +1,530 @@
+/* ── Members page ──────────────────────────────────────────── */
+/* Inherits app shell tokens:
+   --navy: #0F2A47, --cyan: #00B4D8, --slate: #64748B, --bg-soft: #F0F4F8
+*/
+
+.members-page {
+  padding: 32px 36px 48px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.members-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.members-header h1 {
+  font-family: "Inter", sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: #0F2A47;
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.members-subtitle {
+  color: #64748B;
+  font-size: 14px;
+  margin: 0;
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.btn-primary,
+.btn-secondary {
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 10px 20px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-primary {
+  background: #00B4D8;
+  color: #04212F;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #00A0C0;
+  transform: translateY(-1px);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: #FFFFFF;
+  color: #0F2A47;
+  border: 1px solid #D7DEE7;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: #F0F4F8;
+}
+
+/* ── Banners ──────────────────────────────────────────────── */
+.banner {
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 14px;
+  margin-bottom: 16px;
+  font-family: "Inter", sans-serif;
+}
+
+.banner-success {
+  background: #E3F8EE;
+  color: #0F6B3F;
+  border: 1px solid #BCEBD2;
+}
+
+.banner-error {
+  background: #FDECEC;
+  color: #B3261E;
+  border: 1px solid #F6CACA;
+}
+
+/* ── Department tally strip ──────────────────────────────── */
+.dept-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 24px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.dept-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 132px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid #E2E8F0;
+  background: #FFFFFF;
+  cursor: pointer;
+  text-align: left;
+  font-family: "Inter", sans-serif;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.dept-chip:hover {
+  border-color: #00B4D8;
+}
+
+.dept-chip.active {
+  border-color: #00B4D8;
+  box-shadow: 0 0 0 1px #00B4D8 inset;
+  background: #F0FBFE;
+}
+
+.dept-chip-count {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0F2A47;
+  line-height: 1;
+}
+
+.dept-chip-label {
+  font-size: 12px;
+  color: #64748B;
+  font-weight: 500;
+}
+
+/* Department accent stripes — top border color cues */
+.dept-chip.badge-brothers { border-top: 3px solid #2F6FED; }
+.dept-chip.badge-sisters  { border-top: 3px solid #E0588C; }
+.dept-chip.badge-youth    { border-top: 3px solid #00B4D8; }
+.dept-chip.badge-preyouth { border-top: 3px solid #F2A340; }
+.dept-chip.badge-sunday   { border-top: 3px solid #8E6FE0; }
+
+/* ── Department badges (used on cards & modal) ───────────── */
+.dept-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.badge-brothers { background: #E8F0FE; color: #2F6FED; }
+.badge-sisters  { background: #FCE9F0; color: #C23E72; }
+.badge-youth    { background: #E0F7FC; color: #0093B8; }
+.badge-preyouth { background: #FEF1E0; color: #C97D1B; }
+.badge-sunday   { background: #F0EBFC; color: #6E4FCB; }
+
+/* ── Form card ────────────────────────────────────────────── */
+.member-form-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 14px;
+  padding: 28px 28px 24px;
+  margin-bottom: 24px;
+}
+
+.member-form-card h2 {
+  font-family: "Inter", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0F2A47;
+  margin: 0 0 4px;
+}
+
+.form-hint {
+  font-size: 13px;
+  color: #64748B;
+  margin: 0 0 20px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px 20px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field.span-2 {
+  grid-column: span 2;
+}
+
+.form-field label {
+  font-family: "Inter", sans-serif;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.form-field input,
+.form-field select {
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #D7DEE7;
+  background: #FBFCFE;
+  color: #0F2A47;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-field input:focus,
+.form-field select:focus {
+  border-color: #00B4D8;
+  box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
+  background: #FFFFFF;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid #EEF2F6;
+}
+
+/* ── Toolbar / search ─────────────────────────────────────── */
+.members-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.members-search {
+  flex: 1;
+  max-width: 420px;
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #D7DEE7;
+  background: #FFFFFF;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.members-search:focus {
+  border-color: #00B4D8;
+  box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.15);
+}
+
+.active-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Inter", sans-serif;
+  font-size: 13px;
+  color: #0F2A47;
+  background: #F0FBFE;
+  border: 1px solid #00B4D8;
+  border-radius: 999px;
+  padding: 6px 8px 6px 14px;
+}
+
+.active-filter button {
+  background: none;
+  border: none;
+  font-size: 16px;
+  line-height: 1;
+  color: #0093B8;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+/* ── Members grid & cards ─────────────────────────────────── */
+.members-empty {
+  text-align: center;
+  padding: 64px 24px;
+  color: #64748B;
+  font-family: "Inter", sans-serif;
+  font-size: 14px;
+  background: #FFFFFF;
+  border: 1px dashed #D7DEE7;
+  border-radius: 12px;
+}
+
+.members-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.member-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  text-align: left;
+  font-family: "Inter", sans-serif;
+  transition: all 0.15s ease;
+}
+
+.member-card:hover {
+  border-color: #00B4D8;
+  box-shadow: 0 4px 16px rgba(15, 42, 71, 0.06);
+  transform: translateY(-1px);
+}
+
+.member-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #0F2A47;
+  color: #FFFFFF;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.member-avatar.large {
+  width: 64px;
+  height: 64px;
+  font-size: 22px;
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #0F2A47;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-phone {
+  font-size: 12.5px;
+  color: #64748B;
+}
+
+/* ── Modal ────────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 42, 71, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 100;
+}
+
+.modal-card {
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  font-family: "Inter", sans-serif;
+}
+
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: #F0F4F8;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 18px;
+  line-height: 1;
+  color: #64748B;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  background: #E2E8F0;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding-right: 32px;
+}
+
+.modal-header h2 {
+  font-size: 19px;
+  font-weight: 700;
+  color: #0F2A47;
+  margin: 0 0 6px;
+}
+
+.member-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px 20px;
+  margin: 0;
+}
+
+.detail-item dt {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94A3B8;
+  margin-bottom: 2px;
+}
+
+.detail-item dd {
+  font-size: 14px;
+  color: #0F2A47;
+  margin: 0;
+}
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .members-page {
+    padding: 20px 16px 40px;
+  }
+
+  .members-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .form-field.span-2 {
+    grid-column: span 2;
+  }
+
+  .member-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 540px) {
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-field.span-2 {
+    grid-column: span 1;
+  }
+
+  .members-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .form-actions button {
+    width: 100%;
+  }
+}
+
+/* ── Reduced motion ───────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .member-card,
+  .btn-primary,
+  .dept-chip {
+    transition: none;
+  }
+  .member-card:hover {
+    transform: none;
+  }
+}
+
+/* ── Focus visibility ─────────────────────────────────────── */
+.member-card:focus-visible,
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.dept-chip:focus-visible {
+  outline: 2px solid #00B4D8;
+  outline-offset: 2px;
+}

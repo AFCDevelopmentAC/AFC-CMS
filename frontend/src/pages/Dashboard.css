@@ -1,0 +1,80 @@
+.dash { display: flex; flex-direction: column; gap: 2rem; }
+
+.dash-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.dash-header h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #0F2A47;
+  margin: 0 0 0.25rem;
+}
+
+.dash-header p {
+  color: #64748B;
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.dash-date {
+  font-size: 0.82rem;
+  color: #94A3B8;
+  padding-top: 0.25rem;
+}
+
+.dash-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.25rem;
+}
+
+.dash-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  padding: 1.5rem;
+  border-top: 3px solid var(--accent);
+  box-shadow: 0 2px 8px rgba(15,42,71,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dash-card-icon { font-size: 1.5rem; }
+
+.dash-card-value {
+  font-size: 2.25rem;
+  font-weight: 700;
+  color: #0F2A47;
+  line-height: 1;
+}
+
+.dash-card-label {
+  font-size: 0.82rem;
+  color: #64748B;
+  font-weight: 500;
+}
+
+.dash-welcome {
+  background: #0F2A47;
+  border-radius: 12px;
+  padding: 2rem;
+  color: white;
+}
+
+.dash-welcome h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: #00B4D8;
+}
+
+.dash-welcome p {
+  font-size: 0.875rem;
+  color: rgba(255,255,255,0.6);
+  margin: 0;
+}
