@@ -1,0 +1,262 @@
+.audit-page {
+  padding: 32px 36px 48px;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: "Inter", sans-serif;
+}
+
+.audit-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.audit-header h1 {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0F2A47;
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.audit-subtitle {
+  font-size: 13.5px;
+  color: #64748B;
+  margin: 0;
+}
+
+/* ── Filters ── */
+.audit-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+  align-items: center;
+}
+
+.audit-search {
+  flex: 1;
+  min-width: 220px;
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid #D7DEE7;
+  background: #FBFCFE;
+  color: #0F2A47;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.audit-search:focus {
+  border-color: #00B4D8;
+  box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.12);
+}
+
+.audit-filters select {
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  border: 1px solid #D7DEE7;
+  background: #FBFCFE;
+  color: #0F2A47;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.audit-filters select:focus {
+  border-color: #00B4D8;
+  box-shadow: 0 0 0 3px rgba(0, 180, 216, 0.12);
+}
+
+.audit-filter-btn {
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 9px 20px;
+  border: none;
+  border-radius: 8px;
+  background: #00B4D8;
+  color: #04212F;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.audit-filter-btn:hover {
+  background: #00A0C0;
+}
+
+.audit-clear-btn {
+  font-family: "Inter", sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 9px 16px;
+  border: 1px solid #D7DEE7;
+  border-radius: 8px;
+  background: #fff;
+  color: #64748B;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.audit-clear-btn:hover {
+  background: #F1F5F9;
+  color: #0F2A47;
+}
+
+/* ── States ── */
+.audit-error {
+  background: #FDECEC;
+  color: #B3261E;
+  border: 1px solid #F6CACA;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  margin-bottom: 20px;
+}
+
+.audit-loading,
+.audit-empty {
+  text-align: center;
+  padding: 64px 0;
+  font-size: 14px;
+  color: #94A3B8;
+}
+
+/* ── Table ── */
+.audit-table-wrap {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid #E8EDF3;
+  box-shadow: 0 1px 4px rgba(15, 42, 71, 0.06);
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 860px;
+}
+
+.audit-table thead tr {
+  background: #F7FAFC;
+  border-bottom: 1px solid #E8EDF3;
+}
+
+.audit-table th {
+  padding: 11px 14px;
+  text-align: left;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.audit-table tbody tr {
+  border-bottom: 1px solid #F0F4F8;
+  transition: background 0.1s;
+}
+
+.audit-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.audit-table tbody tr:hover {
+  background: #F7FAFC;
+}
+
+.audit-table td {
+  padding: 11px 14px;
+  vertical-align: middle;
+  color: #334155;
+}
+
+.audit-timestamp {
+  font-family: monospace;
+  font-size: 12px;
+  color: #64748B !important;
+  white-space: nowrap;
+}
+
+.audit-username {
+  font-weight: 600;
+  color: #0F2A47 !important;
+  white-space: nowrap;
+}
+
+.audit-module {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #94A3B8 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.audit-item {
+  font-family: monospace;
+  font-size: 12px;
+  color: #475569 !important;
+}
+
+.audit-description {
+  color: #475569 !important;
+  line-height: 1.4;
+}
+
+/* ── Action badges ── */
+.audit-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+}
+
+.audit-badge-success {
+  background: #ECFDF3;
+  color: #15803D;
+}
+
+.audit-badge-danger {
+  background: #FDECEC;
+  color: #B3261E;
+}
+
+.audit-badge-warning {
+  background: #FFFBEB;
+  color: #B45309;
+}
+
+.audit-badge-neutral {
+  background: #F0F4F8;
+  color: #475569;
+}
+
+/* ── Responsive ── */
+@media (max-width: 680px) {
+  .audit-page {
+    padding: 20px 16px 40px;
+  }
+
+  .audit-filters {
+    flex-direction: column;
+  }
+
+  .audit-search {
+    width: 100%;
+  }
+
+  .audit-filter-btn,
+  .audit-clear-btn {
+    width: 100%;
+  }
+}
