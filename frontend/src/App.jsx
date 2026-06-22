@@ -4,6 +4,9 @@ import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
 import Members from "./pages/Members";
 import Users from "./pages/Users";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
+import Audit from "./pages/Audit";
 
 function ProtectedRoute({ children }) {
   const { isAuthenticated } = useAuth();
@@ -29,8 +32,12 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+          {/* ── Public routes (no shell, no auth required) ── */}
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
+          {/* ── Protected routes (inside AppShell) ── */}
           <Route
             element={
               <ProtectedRoute>
@@ -39,6 +46,8 @@ export default function App() {
             }
           >
             <Route path="/members" element={<Members />} />
+
+            {/* Admin-only routes */}
             <Route
               path="/users"
               element={
@@ -47,8 +56,17 @@ export default function App() {
                 </AdminRoute>
               }
             />
+            <Route
+              path="/audit"
+              element={
+                <AdminRoute>
+                  <Audit />
+                </AdminRoute>
+              }
+            />
           </Route>
 
+          {/* ── Fallback ── */}
           <Route path="*" element={<Navigate to="/members" replace />} />
         </Routes>
       </BrowserRouter>
