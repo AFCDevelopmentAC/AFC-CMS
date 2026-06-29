@@ -263,20 +263,33 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
             user = u
             break
     
-    hashed_password_in_sheet = (user.get("PASSWORD") or user.get("password") or "").strip() if user else ""
+    if not user:
+        print(f"❌ LOGIN FAILED: Username '{form_data.username}' not found in sheet database columns.")
+        _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid username matching.")
+        raise HTTPException(status_code=401, detail="Incorrect username or password.")
 
-    if not user or not _verify(form_data.password, hashed_password_in_sheet):
-        _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid credential challenge details.")
+    hashed_password_in_sheet = (user.get("PASSWORD") or user.get("password") or "").strip()
+    
+    # Check if the text in the spreadsheet cell is raw plain text or hashed text
+    is_password_verified = _verify(form_data.password, hashed_password_in_sheet)
+    
+    if not is_password_verified:
+        print(f"❌ LOGIN FAILED: Password validation challenge failed for user '{target_username}'.")
+        print(f"   Submitted text: {form_data.password}")
+        print(f"   Spreadsheet string value: {hashed_password_in_sheet}")
+        _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid password verify mismatch.")
         raise HTTPException(status_code=401, detail="Incorrect username or password.")
 
     user_active_status = str(user.get("IS_ACTIVE") or user.get("is_active") or "TRUE").strip().upper()
     if user_active_status != "TRUE":
+        print(f"❌ LOGIN BLOCKED: User profile '{target_username}' found, but IS_ACTIVE field evaluates to '{user_active_status}'.")
         _audit(form_data.username, "LOGIN_BLOCKED", "AUTH", form_data.username, "Login denied on disabled user record.")
         raise HTTPException(status_code=403, detail="Account inactive. Please contact administration.")
 
     is_admin = str(user.get("IS_ADMIN") or user.get("is_admin") or "FALSE").strip().upper() == "TRUE"
     token = create_token(data={"sub": user.get("USERNAME") or user.get("username")})
     
+    print(f"✅ LOGIN SUCCESSFUL: User '{target_username}' authorized successfully. Admin status: {is_admin}")
     _audit(user.get("USERNAME") or user.get("username"), "LOGIN", "AUTH", user.get("USERNAME") or user.get("username"), "User authenticated successfully.")
     
     return {
