@@ -13,9 +13,10 @@ const ACTION_OPTIONS = [
 const MODULE_OPTIONS = ["", "AUTH", "USERS", "MEMBERS"];
 
 function actionTone(action) {
-  if (action.includes("FAILED") || action.includes("BLOCKED") || action.includes("DELETE")) return "danger";
-  if (action.includes("CREATE") || action.includes("ADD")) return "success";
-  if (action.includes("UPDATE") || action.includes("OVERRIDE") || action.includes("RESET")) return "warning";
+  const norm = String(action || "").toUpperCase();
+  if (norm.includes("FAILED") || norm.includes("BLOCKED") || norm.includes("DELETE")) return "danger";
+  if (norm.includes("CREATE") || norm.includes("ADD")) return "success";
+  if (norm.includes("UPDATE") || norm.includes("OVERRIDE") || norm.includes("RESET")) return "warning";
   return "neutral";
 }
 
@@ -27,105 +28,84 @@ export default function Audit() {
   const [action, setAction] = useState("");
   const [module, setModule] = useState("");
 
-  async function fetchAudit() {
+  async function fetchAudit(e) {
+    if (e) e.preventDefault();
     setLoading(true);
     setError("");
     try {
-      const params = {};
-      if (query.trim()) params.q = query.trim();
-      if (action) params.action = action;
-      if (module) params.module = module;
-      const hasFilters = params.q || params.action || params.module;
-      const { data } = await api.get(hasFilters ? "/api/audit/search" : "/api/audit", { params });
-      setRecords(data);
+      // Connect directly to the search router utilizing proper search params mapping
+      const res = await api.get("/api/audit/search", {
+        params: {
+          q: query.trim(),
+          action: action,
+          module: module
+        }
+      });
+      setRecords(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
-      if (err?.response?.status === 403) {
-        setError("Admin access required to view the audit trail.");
-      } else {
-        setError("Couldn't load the audit trail. Check your connection and try again.");
-      }
+      setError(err?.response?.data?.detail || "Could not fetch audit history log details.");
     } finally {
       setLoading(false);
     }
   }
 
+  // Load baseline logs automatically on component view entry
   useEffect(() => {
     fetchAudit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  function handleFilterSubmit(e) {
-    e.preventDefault();
-    fetchAudit();
-  }
-
-  function clearFilters() {
-    setQuery("");
-    setAction("");
-    setModule("");
-    setTimeout(fetchAudit, 0);
-  }
+  }, [action, module]); // Automatically refetch if drop-downs toggle
 
   return (
     <div className="audit-page">
       <div className="audit-header">
         <div>
-          <h1>Audit trail</h1>
-          <p className="audit-subtitle">
-            Every significant action in the system — who did what, when, and what changed.
-          </p>
+          <h1>System Audit Trail</h1>
+          <p className="audit-subtitle">Security monitoring and operations log history</p>
         </div>
       </div>
 
-      <form className="audit-filters" onSubmit={handleFilterSubmit}>
+      <form onSubmit={fetchAudit} className="audit-filters">
         <input
           type="text"
           className="audit-search"
-          placeholder="Search by user, item, or description…"
+          placeholder="Search by User, Description, or Item ID..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <select value={action} onChange={(e) => setAction(e.target.value)}>
-          {ACTION_OPTIONS.map((a) => (
-            <option key={a} value={a}>
-              {a === "" ? "All actions" : a.replaceAll("_", " ")}
-            </option>
+
+        <select value={action} onChange={(e) => setAction(e.target.value)} className="audit-select">
+          <option value="">All Actions</option>
+          {ACTION_OPTIONS.filter(Boolean).map(opt => (
+            <option key={opt} value={opt}>{opt.replaceAll("_", " ")}</option>
           ))}
         </select>
-        <select value={module} onChange={(e) => setModule(e.target.value)}>
-          {MODULE_OPTIONS.map((m) => (
-            <option key={m} value={m}>
-              {m === "" ? "All modules" : m}
-            </option>
+
+        <select value={module} onChange={(e) => setModule(e.target.value)} className="audit-select">
+          <option value="">All Modules</option>
+          {MODULE_OPTIONS.filter(Boolean).map(opt => (
+            <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
-        <button type="submit" className="audit-filter-btn">
-          Filter
-        </button>
-        {(query || action || module) && (
-          <button type="button" className="audit-clear-btn" onClick={clearFilters}>
-            Clear
-          </button>
-        )}
+
+        <button type="submit" className="btn-primary">Filter</button>
       </form>
 
-      {error && <div className="audit-error">{error}</div>}
+      {error && <div className="banner-error">{error}</div>}
 
       {loading ? (
-        <div className="audit-loading">Loading audit trail…</div>
+        <div className="audit-loading">Loading configuration trails...</div>
       ) : records.length === 0 ? (
-        <div className="audit-empty">No audit records match your filters.</div>
+        <div className="audit-empty">No log history rows matched your criteria.</div>
       ) : (
         <div className="audit-table-wrap">
           <table className="audit-table">
             <thead>
               <tr>
                 <th>Timestamp</th>
-                <th>User</th>
-                <th>Action</th>
+                <th>User Account</th>
+                <th>Action State</th>
                 <th>Module</th>
-                <th>Item</th>
-                <th>Description</th>
+                <th>Target Reference</th>
+                <th>Activity Description</th>
               </tr>
             </thead>
             <tbody>
@@ -134,12 +114,12 @@ export default function Audit() {
                   <td className="audit-timestamp">{r.TIMESTAMP}</td>
                   <td className="audit-username">{r.USERNAME}</td>
                   <td>
-                    <span className={`audit-badge audit-badge-${actionTone(r.ACTION || "")}`}>
-                      {(r.ACTION || "").replaceAll("_", " ")}
+                    <span className={`audit-badge audit-badge-${actionTone(r.ACTION)}`}>
+                      {String(r.ACTION || "").replaceAll("_", " ")}
                     </span>
                   </td>
                   <td className="audit-module">{r.MODULE}</td>
-                  <td className="audit-item">{r.ITEM_ID}</td>
+                  <td className="audit-item">{r.ITEM_ID || "—"}</td>
                   <td className="audit-description">{r.DESCRIPTION}</td>
                 </tr>
               ))}
