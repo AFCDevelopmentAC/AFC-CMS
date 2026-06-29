@@ -194,17 +194,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
         raise credentials_exception
 
     users = sheet_to_list("Users_db")
-    user = next((u for u in users if u.get("USERNAME", "").lower() == username.lower()), None)
+    user = next((u for u in users if (u.get("USERNAME") or u.get("username") or "").strip().lower() == username.lower()), None)
     if not user:
         raise credentials_exception
 
-    if str(user.get("IS_ACTIVE", "")).upper() != "TRUE":
+    user_active_status = str(user.get("IS_ACTIVE") or user.get("is_active") or "TRUE").strip().upper()
+    if user_active_status != "TRUE":
         raise HTTPException(status_code=403, detail="Your staff account has been deactivated.")
 
-    is_admin = str(user.get("IS_ADMIN", "")).upper() == "TRUE"
+    is_admin = str(user.get("IS_ADMIN") or user.get("is_admin") or "FALSE").strip().upper() == "TRUE"
     return CurrentUser(
-        username=user.get("USERNAME"),
-        full_name=user.get("FULL_NAME", user.get("USERNAME")),
+        username=user.get("USERNAME") or user.get("username"),
+        full_name=user.get("FULL_NAME") or user.get("full_name") or user.get("USERNAME") or user.get("username"),
         is_admin=is_admin
     )
 
@@ -253,47 +254,61 @@ def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
 @app.post("/api/auth/login", tags=["Auth"])
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     users = sheet_to_list("Users_db")
-    user = next((u for u in users if u.get("USERNAME", "").lower() == form_data.username.lower()), None)
     
-    if not user or not _verify(form_data.password, user.get("PASSWORD", "")):
+    target_username = form_data.username.strip().lower()
+    user = None
+    for u in users:
+        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
+        if sheet_user == target_username:
+            user = u
+            break
+    
+    hashed_password_in_sheet = (user.get("PASSWORD") or user.get("password") or "").strip() if user else ""
+
+    if not user or not _verify(form_data.password, hashed_password_in_sheet):
         _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid credential challenge details.")
         raise HTTPException(status_code=401, detail="Incorrect username or password.")
 
-    if str(user.get("IS_ACTIVE", "")).upper() != "TRUE":
+    user_active_status = str(user.get("IS_ACTIVE") or user.get("is_active") or "TRUE").strip().upper()
+    if user_active_status != "TRUE":
         _audit(form_data.username, "LOGIN_BLOCKED", "AUTH", form_data.username, "Login denied on disabled user record.")
         raise HTTPException(status_code=403, detail="Account inactive. Please contact administration.")
 
-    is_admin = str(user.get("IS_ADMIN", "")).upper() == "TRUE"
-    token = create_token(data={"sub": user.get("USERNAME")})
+    is_admin = str(user.get("IS_ADMIN") or user.get("is_admin") or "FALSE").strip().upper() == "TRUE"
+    token = create_token(data={"sub": user.get("USERNAME") or user.get("username")})
     
-    _audit(user.get("USERNAME"), "LOGIN", "AUTH", user.get("USERNAME"), "User authenticated successfully.")
+    _audit(user.get("USERNAME") or user.get("username"), "LOGIN", "AUTH", user.get("USERNAME") or user.get("username"), "User authenticated successfully.")
     
     return {
         "access_token": token,
         "token_type": "bearer",
-        "full_name": user.get("FULL_NAME"),
+        "full_name": user.get("FULL_NAME") or user.get("full_name") or user.get("USERNAME") or user.get("username"),
         "is_admin": is_admin
     }
 
 @app.post("/api/auth/forgot-password", tags=["Auth"])
 def forgot_password(req: ForgotPasswordRequest):
     users = sheet_to_list("Users_db")
-    user = next((u for u in users if u.get("EMAIL", "").lower() == req.email.lower()), None)
+    user = next((u for u in users if (u.get("EMAIL") or u.get("email") or "").strip().lower() == req.email.lower()), None)
     
     if user:
+        username_val = user.get("USERNAME") or user.get("username")
+        email_val = user.get("EMAIL") or user.get("email")
+        fullname_val = user.get("FULL_NAME") or user.get("full_name") or username_val
+
         reset_token = create_token(
-            data={"sub": user.get("USERNAME"), "purpose": "password_reset"},
+            data={"sub": username_val, "purpose": "password_reset"},
             expires_delta=timedelta(hours=1)
         )
         reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
         body = (
-            f"Hello {user.get('FULL_NAME')},\n\n"
+            f"Hello {fullname_val},\n\n"
             f"You requested a password reset for the AFC Uthiru CMS portal.\n"
             f"Click the link below to configure your new login password:\n{reset_link}\n\n"
             f"This security link will expire in 1 hour."
         )
-        send_system_email(user.get("EMAIL"), "AFC CMS — Reset Password Request", body)
-        _audit(user.get("USERNAME"), "FORGOT_PASSWORD", "AUTH", user.get("USERNAME"), "Reset link dispatched to inbox.")
+        send_system_email(email_val, "AFC CMS — Reset Password Request", body)
+        _audit(username_val, "FORGOT_PASSWORD", "AUTH", username_val, "Reset link dispatched to inbox.")
     
     return {"detail": "If an account exists with that email, a password reset link has been dispatched."}
 
@@ -313,7 +328,8 @@ def reset_password(req: ResetPasswordRequest):
     target_user = None
 
     for idx, u in enumerate(users, start=2):
-        if u.get("USERNAME", "").lower() == username.lower():
+        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
+        if sheet_user == username.lower():
             row_idx = idx
             target_user = u
             break
@@ -323,14 +339,14 @@ def reset_password(req: ResetPasswordRequest):
 
     hashed_pwd = _hash(req.new_password)
     updated_row_values = [
-        target_user.get("S_N", ""),
-        target_user.get("USERNAME", ""),
-        target_user.get("FULL_NAME", ""),
-        target_user.get("EMAIL", ""),
+        target_user.get("S_N") or target_user.get("s_n") or "",
+        target_user.get("USERNAME") or target_user.get("username") or "",
+        target_user.get("FULL_NAME") or target_user.get("full_name") or "",
+        target_user.get("EMAIL") or target_user.get("email") or "",
         hashed_pwd,
-        target_user.get("IS_ADMIN", "FALSE"),
-        target_user.get("IS_ACTIVE", "TRUE"),
-        target_user.get("CHURCH_BRANCH", "AFC UTHIRU"),
+        target_user.get("IS_ADMIN") or target_user.get("is_admin") or "FALSE",
+        target_user.get("IS_ACTIVE") or target_user.get("is_active") or "TRUE",
+        target_user.get("CHURCH_BRANCH") or target_user.get("church_branch") or "AFC UTHIRU",
         now_str()
     ]
 
@@ -348,15 +364,17 @@ def get_users(_: CurrentUser = Depends(require_admin)):
         c = r.copy()
         if "PASSWORD" in c:
             del c["PASSWORD"]
+        if "password" in c:
+            del c["password"]
         clean.append(c)
     return clean
 
 @app.post("/api/users", tags=["Users"])
 def create_user(user: UserCreate, current_user: CurrentUser = Depends(require_admin)):
     users = sheet_to_list("Users_db")
-    if any(u.get("USERNAME", "").lower() == user.username.lower() for u in users):
+    if any((u.get("USERNAME") or u.get("username") or "").strip().lower() == user.username.lower() for u in users):
         raise HTTPException(status_code=400, detail="Username is already occupied.")
-    if any(u.get("EMAIL", "").lower() == user.email.lower() for u in users):
+    if any((u.get("EMAIL") or u.get("email") or "").strip().lower() == user.email.lower() for u in users):
         raise HTTPException(status_code=400, detail="Email address is already in use.")
 
     sn = next_sn("Users_db")
@@ -387,7 +405,8 @@ def deactivate_user(username: str, current_user: CurrentUser = Depends(require_a
     target_user = None
 
     for idx, u in enumerate(users, start=2):
-        if u.get("USERNAME", "").lower() == username.lower():
+        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
+        if sheet_user == username.lower():
             row_idx = idx
             target_user = u
             break
@@ -396,9 +415,15 @@ def deactivate_user(username: str, current_user: CurrentUser = Depends(require_a
         raise HTTPException(status_code=404, detail="Target user account profile was not found.")
 
     updated_row_values = [
-        target_user.get("S_N", ""), target_user.get("USERNAME", ""), target_user.get("FULL_NAME", ""),
-        target_user.get("EMAIL", ""), target_user.get("PASSWORD", ""), target_user.get("IS_ADMIN", "FALSE"),
-        "FALSE", target_user.get("CHURCH_BRANCH", "AFC UTHIRU"), now_str()
+        target_user.get("S_N") or target_user.get("s_n") or "",
+        target_user.get("USERNAME") or target_user.get("username") or "",
+        target_user.get("FULL_NAME") or target_user.get("full_name") or "",
+        target_user.get("EMAIL") or target_user.get("email") or "",
+        target_user.get("PASSWORD") or target_user.get("password") or "",
+        target_user.get("IS_ADMIN") or target_user.get("is_admin") or "FALSE",
+        "FALSE",
+        target_user.get("CHURCH_BRANCH") or target_user.get("church_branch") or "AFC UTHIRU",
+        now_str()
     ]
     
     update_row("Users_db", row_idx, updated_row_values)
@@ -410,7 +435,7 @@ def deactivate_user(username: str, current_user: CurrentUser = Depends(require_a
 def get_members(_: CurrentUser = Depends(get_current_user)):
     records = sheet_to_list("Members_db")
     for r in records:
-        depts_raw = r.get("DEPARTMENTS", "")
+        depts_raw = r.get("DEPARTMENTS") or r.get("departments") or ""
         r["DEPARTMENTS"] = [d.strip() for d in depts_raw.split(",") if d.strip()] if depts_raw else []
     return records
 
@@ -440,7 +465,7 @@ def update_member(sn: str, m: MemberModel, current_user: CurrentUser = Depends(g
     members = sheet_to_list("Members_db")
     row_idx = None
     for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N", "") or row.get("s_n", "")) == str(sn):
+        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
             row_idx = idx
             break
 
@@ -471,9 +496,9 @@ def delete_member(sn: str, current_user: CurrentUser = Depends(get_current_user)
     target_name = "Unknown"
 
     for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N", "") or row.get("s_n", "")) == str(sn):
+        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
             row_idx = idx
-            target_name = row.get("FULL_NAME", "Unknown")
+            target_name = row.get("FULL_NAME") or row.get("full_name") or "Unknown"
             break
 
     if not row_idx:
@@ -508,7 +533,7 @@ def override_department(sn: str, req: OverrideDeptRequest, current_user: Current
     target_member = None
 
     for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N", "") or row.get("s_n", "")) == str(sn):
+        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
             row_idx = idx
             target_member = row
             break
@@ -516,7 +541,7 @@ def override_department(sn: str, req: OverrideDeptRequest, current_user: Current
     if not row_idx or not target_member:
         raise HTTPException(status_code=404, detail="Member matching structural lookup index reference not found.")
 
-    depts_raw = target_member.get("DEPARTMENTS", "")
+    depts_raw = target_member.get("DEPARTMENTS") or target_member.get("departments") or ""
     current_depts = [d.strip() for d in depts_raw.split(",") if d.strip()] if depts_raw else []
     
     if req.department not in current_depts:
@@ -526,19 +551,23 @@ def override_department(sn: str, req: OverrideDeptRequest, current_user: Current
         current_depts.insert(0, req.department)
 
     depts_str = ",".join(current_depts)
+    
+    def g(key, default=""):
+        return target_member.get(key.upper()) or target_member.get(key.lower()) or default
+
     update_row("Members_db", row_idx, [
-        target_member.get("S_N"), target_member.get("MEMBERSHIP_NUMBER"), target_member.get("FULL_NAME"),
-        target_member.get("PHONE_NUMBER"), target_member.get("EMAIL"), target_member.get("SEX"),
-        target_member.get("MARITAL_STATUS"), target_member.get("DATE_OF_BIRTH"), target_member.get("RESIDENCE"),
-        target_member.get("LANDMARK"), target_member.get("OCCUPATION"), target_member.get("MEMBERSHIP_STATUS"),
-        target_member.get("SPOUSE_NAME"), target_member.get("NO_OF_CHILDREN"), target_member.get("CONVERSION_DATE"),
-        target_member.get("BAPTISM_DATE"), target_member.get("HOLY_SPIRIT_RECEIVED"), target_member.get("HOLY_SPIRIT_DATE"),
-        target_member.get("NOK_NAME"), target_member.get("NOK_RELATIONSHIP"), target_member.get("NOK_PHONE"),
-        target_member.get("PHOTO_URL"), req.department, depts_str, now_str()
+        g("s_n"), g("membership_number"), g("full_name"),
+        g("phone_number"), g("email"), g("sex"),
+        g("marital_status"), g("date_of_birth"), g("residence"),
+        g("landmark"), g("occupation"), g("membership_status"),
+        g("spouse_name"), g("no_of_children"), g("conversion_date"),
+        g("baptism_date"), g("holy_spirit_received"), g("holy_spirit_date"),
+        g("nok_name"), g("nok_relationship"), g("nok_phone"),
+        g("photo_url"), req.department, depts_str, now_str()
     ])
 
     _audit(current_user.username, "OVERRIDE_DEPARTMENT", "MEMBERS", str(sn), 
-           f"Forced manual primary department realignment to '{req.department}' for {target_member.get('FULL_NAME')}.")
+           f"Forced manual primary department realignment to '{req.department}' for {g('full_name')}.")
     return {"detail": "Primary structural department mapping overriden successfully."}
 
 # ── Audit Infrastructure Core ───────────────────────────────────────────────
@@ -561,15 +590,15 @@ def search_audit_log(q: str = "", action: str = "", module: str = "",
     """Admin only — filter audit trail by free-text, action, and/or module."""
     records = list(reversed(sheet_to_list("AuditLog_db")))
     if action:
-        records = [r for r in records if r.get("ACTION", "").upper() == action.upper()]
+        records = [r for r in records if (r.get("ACTION") or r.get("action") or "").upper() == action.upper()]
     if module:
-        records = [r for r in records if r.get("MODULE", "").upper() == module.upper()]
+        records = [r for r in records if (r.get("MODULE") or r.get("module") or "").upper() == module.upper()]
     if q:
         q_low = q.lower()
         records = [
             r for r in records if 
-            q_low in r.get("USERNAME", "").lower() or 
-            q_low in r.get("DESCRIPTION", "").lower() or 
-            q_low in r.get("ITEM_ID", "").lower()
+            q_low in (r.get("USERNAME") or r.get("username") or "").lower() or 
+            q_low in (r.get("DESCRIPTION") or r.get("description") or "").lower() or 
+            q_low in (r.get("ITEM_ID") or r.get("item_id") or "").lower()
         ]
     return records
