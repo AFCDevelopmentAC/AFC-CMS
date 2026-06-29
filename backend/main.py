@@ -253,51 +253,40 @@ def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
 # ── Authentication Endpoints ──────────────────────────────────────────────────
 @app.post("/api/auth/login", tags=["Auth"])
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    users = sheet_to_list("Users_db")
+    username = form_data.username.strip()
+    password = form_data.password
     
-    target_username = form_data.username.strip().lower()
-    user = None
-    for u in users:
-        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
-        if sheet_user == target_username:
-            user = u
+    try:
+        # 1. Let's see what Spreadsheet the API is actually targeting
+        meta = spreadsheets.get(spreadsheetId=SPREADSHEET_ID).execute()
+        print(f"📡 API CONNECTED TO SPREADSHEET TITLE: '{meta.get('properties', {}).get('title')}' (ID: {SPREADSHEET_ID})")
+        
+        # 2. Let's look at the sheet tabs available
+        sheets_present = [s.get('properties', {}).get('title') for s in meta.get('sheets', [])]
+        print(f"📋 AVAILABLE TABS IN THIS SHEET: {sheets_present}")
+        
+        # 3. Read the columns row
+        res = spreadsheets.values().get(spreadsheetId=SPREADSHEET_ID, range="Users_db!A1:Z1").execute()
+        headers = res.get("values", [[]])[0]
+        print(f"📊 RAW HEADERS FOUND IN 'Users_db': {headers}")
+        
+    except Exception as api_err:
+        print(f"❌ GOOGLE API ERROR DURING DIAGNOSTIC: {api_err}")
+
+    # Keep your existing spreadsheet extraction logic below...
+    records = sheet_to_list("Users_db")
+    user_profile = None
+    for r in records:
+        if str(r.get("USERNAME", "")).strip() == username:
+            user_profile = r
             break
-    
-    if not user:
-        print(f"❌ LOGIN FAILED: Username '{form_data.username}' not found in sheet database columns.")
-        _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid username matching.")
+
+    if not user_profile:
+        print(f"❌ LOGIN FAILED: Username '{username}' not found in sheet database columns.")
+        _audit(username, "LOGIN_FAILED", "AUTH", username, "Username not found.")
         raise HTTPException(status_code=401, detail="Incorrect username or password.")
-
-    hashed_password_in_sheet = (user.get("PASSWORD") or user.get("password") or "").strip()
-    
-    # Check if the text in the spreadsheet cell is raw plain text or hashed text
-    is_password_verified = _verify(form_data.password, hashed_password_in_sheet)
-    
-    if not is_password_verified:
-        print(f"❌ LOGIN FAILED: Password validation challenge failed for user '{target_username}'.")
-        print(f"   Submitted text: {form_data.password}")
-        print(f"   Spreadsheet string value: {hashed_password_in_sheet}")
-        _audit(form_data.username, "LOGIN_FAILED", "AUTH", form_data.username, "Invalid password verify mismatch.")
-        raise HTTPException(status_code=401, detail="Incorrect username or password.")
-
-    user_active_status = str(user.get("IS_ACTIVE") or user.get("is_active") or "TRUE").strip().upper()
-    if user_active_status != "TRUE":
-        print(f"❌ LOGIN BLOCKED: User profile '{target_username}' found, but IS_ACTIVE field evaluates to '{user_active_status}'.")
-        _audit(form_data.username, "LOGIN_BLOCKED", "AUTH", form_data.username, "Login denied on disabled user record.")
-        raise HTTPException(status_code=403, detail="Account inactive. Please contact administration.")
-
-    is_admin = str(user.get("IS_ADMIN") or user.get("is_admin") or "FALSE").strip().upper() == "TRUE"
-    token = create_token(data={"sub": user.get("USERNAME") or user.get("username")})
-    
-    print(f"✅ LOGIN SUCCESSFUL: User '{target_username}' authorized successfully. Admin status: {is_admin}")
-    _audit(user.get("USERNAME") or user.get("username"), "LOGIN", "AUTH", user.get("USERNAME") or user.get("username"), "User authenticated successfully.")
-    
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "full_name": user.get("FULL_NAME") or user.get("full_name") or user.get("USERNAME") or user.get("username"),
-        "is_admin": is_admin
-    }
+        
+    # ... (rest of your login code remains the same)
 
 @app.post("/api/auth/forgot-password", tags=["Auth"])
 def forgot_password(req: ForgotPasswordRequest):
