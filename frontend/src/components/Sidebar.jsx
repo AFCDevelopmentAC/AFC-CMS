@@ -21,7 +21,6 @@ export default function Sidebar() {
       >
         ☰
       </button>
-
       <aside className={`sidebar ${open ? "open" : ""}`}>
         <div className="sidebar-brand">
           <div className="sidebar-mark">AFC</div>
@@ -34,9 +33,7 @@ export default function Sidebar() {
         <nav className="sidebar-nav">
           <NavLink
             to="/members"
-            className={({ isActive }) =>
-              `sidebar-link ${isActive ? "active" : ""}`
-            }
+            className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
             onClick={() => setOpen(false)}
           >
             Members
@@ -45,12 +42,20 @@ export default function Sidebar() {
           {user?.is_admin && (
             <NavLink
               to="/users"
-              className={({ isActive }) =>
-                `sidebar-link ${isActive ? "active" : ""}`
-              }
+              className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
               onClick={() => setOpen(false)}
             >
               Users
+            </NavLink>
+          )}
+
+          {user?.is_admin && (
+            <NavLink
+              to="/audit"
+              className={({ isActive }) => `sidebar-link ${isActive ? "active" : ""}`}
+              onClick={() => setOpen(false)}
+            >
+              Audit Trail
             </NavLink>
           )}
         </nav>
