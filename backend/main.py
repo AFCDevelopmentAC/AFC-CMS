@@ -1,606 +1,852 @@
 """
 AFC Uthiru Church Management System — FastAPI Sync Engine
-v1.2 — Members + Email on create + Forgot/Reset Password + Full Audit Trail.
+v1.2 — Auth + Users + Members + Audit Trail + Email + Password Reset
 """
 
 import os
 import json
+import secrets
+import httpx
 from datetime import datetime, timedelta, timezone, date
-from typing import Optional
+from typing import Optional, List
 
 import bcrypt
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from google.oauth2.service_account import Credentials
 
+# ── App ───────────────────────────────────────────────────────
 app = FastAPI(title="AFC Uthiru CMS API", version="1.2.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
+# ── Config ────────────────────────────────────────────────────
 CREDENTIALS_FILE = "afs-uthiru-cms-de0018a945c1.json"
 SPREADSHEET_ID   = os.environ.get("SPREADSHEET_ID", "1tX_G4wlCKKRuPVPr-jy5f992jnmlp0y_3s-yd-UNkTs")
 SCOPES           = ["https://www.googleapis.com/auth/spreadsheets"]
 SECRET_KEY       = os.environ.get("SECRET_KEY", "CHANGE-THIS-BEFORE-PRODUCTION-AFC-UTHIRU")
 ALGORITHM        = "HS256"
-TOKEN_EXPIRY_MIN = 480
+TOKEN_EXPIRE_MIN = 480
 
-# ── Google Sheets Client Setup ───────────────────────────────────────────────
-try:
-    if os.path.exists(CREDENTIALS_FILE):
-        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
-    else:
-        creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-        if not creds_json:
-            raise RuntimeError("Missing Google Credentials mapping profile.")
-        creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
-    sheets_service = build("sheets", "v4", credentials=creds)
-except Exception as e:
-    print(f"CRITICAL: Failed to initialize Google Sheets service layer: {e}")
-    sheets_service = None
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM    = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
+FRONTEND_URL   = os.environ.get("FRONTEND_URL", "https://afc-cms.vercel.app")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
-# ── Pydantic Models ──────────────────────────────────────────────────────────
-class UserCreate(BaseModel):
-    username: str
-    full_name: str
-    email: str
-    password: str
-    is_admin: bool = False
-    church_branch: str = "AFC UTHIRU"
 
-class ForgotPasswordRequest(BaseModel):
-    email: str
+# ═══════════════════════════════════════════════════════════════
+# GOOGLE SHEETS HELPERS
+# ═══════════════════════════════════════════════════════════════
 
-class ResetPasswordRequest(BaseModel):
-    token: str
-    new_password: str
+def _service():
+    creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_json:
+        creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
+    else:
+        if not os.path.exists(CREDENTIALS_FILE):
+            raise RuntimeError(f"'{CREDENTIALS_FILE}' not found.")
+        creds = Credentials.from_service_account_file(CREDENTIALS_FILE, scopes=SCOPES)
+    return build("sheets", "v4", credentials=creds)
 
-class MemberModel(BaseModel):
-    s_n: Optional[str] = None
-    membership_number: Optional[str] = ""
-    full_name: str
-    phone_number: Optional[str] = ""
-    email: Optional[str] = ""
-    sex: str
-    marital_status: str
-    date_of_birth: Optional[str] = ""
-    residence: Optional[str] = ""
-    landmark: Optional[str] = ""
-    occupation: Optional[str] = ""
-    membership_status: str = "ACTIVE"
-    spouse_name: Optional[str] = ""
-    no_of_children: Optional[str] = "0"
-    conversion_date: Optional[str] = ""
-    baptism_date: Optional[str] = ""
-    holy_spirit_received: str = "NO"
-    holy_spirit_date: Optional[str] = ""
-    nok_name: Optional[str] = ""
-    nok_relationship: Optional[str] = ""
-    nok_phone: Optional[str] = ""
-    photo_url: Optional[str] = ""
-    departments: list[str] = []
 
-class OverrideDeptRequest(BaseModel):
-    department: str
+def sheet_to_list(sheet_name: str, header_row: int = 6) -> list[dict]:
+    """
+    Read a sheet into a list of dicts.
+    header_row=6 matches our database format (rows 1-5 are metadata, row 6 is headers).
+    Skips null/placeholder rows (S_N == 0 or NULL).
+    """
+    result = _service().spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A{header_row}:ZZ"
+    ).execute()
+    rows = result.get("values", [])
+    if not rows:
+        return []
+    headers = [str(h).strip() for h in rows[0]]
+    records = []
+    for row in rows[1:]:
+        if not row:
+            continue
+        sn = str(row[0]).strip()
+        if sn in ("", "0", "0.0", "NULL"):
+            continue
+        obj = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+        records.append(obj)
+    return records
+
+
+def append_row(sheet_name: str, values: list):
+    _service().spreadsheets().values().append(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A7",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [values]},
+    ).execute()
+
+
+def find_row_by_sn(sheet_name: str, sn, header_row: int = 6) -> int | None:
+    result = _service().spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A{header_row}:A"
+    ).execute()
+    for idx, row in enumerate(result.get("values", [])):
+        if row and str(row[0]).strip() == str(sn).strip():
+            return header_row + idx
+    return None
+
+
+def update_row(sheet_name: str, row_number: int, values: list):
+    n = len(values)
+    if n <= 26:
+        col_end = chr(ord("A") + n - 1)
+    else:
+        col_end = chr(ord("A") + (n // 26) - 1) + chr(ord("A") + (n % 26) - 1)
+    _service().spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A{row_number}:{col_end}{row_number}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [values]},
+    ).execute()
+
+
+def clear_row(sheet_name: str, row_number: int):
+    _service().spreadsheets().values().clear(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!A{row_number}:Z{row_number}",
+    ).execute()
+
+
+def next_sn(sheet_name: str) -> str:
+    records = sheet_to_list(sheet_name)
+    if not records:
+        return "1"
+    try:
+        return str(max(int(r.get("S_N", 0)) for r in records if str(r.get("S_N", "")).isdigit()) + 1)
+    except Exception:
+        return str(len(records) + 1)
+
+
+def now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT  — defined first so every endpoint can call it
+# ═══════════════════════════════════════════════════════════════
+
+def _audit(username: str, action: str, module: str, item_id: str, description: str):
+    """Write an audit entry. Best-effort — never raises."""
+    try:
+        sn = next_sn("AuditLog_db")
+        append_row("AuditLog_db", [sn, now_str(), username, action, module, str(item_id), description])
+    except Exception as e:
+        print(f"Audit log error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# EMAIL  (Resend)
+# ═══════════════════════════════════════════════════════════════
+
+def _send_email(to: str, subject: str, html: str) -> bool:
+    if not RESEND_API_KEY:
+        print(f"[EMAIL SKIP] No RESEND_API_KEY set. Would have sent '{subject}' to {to}")
+        return False
+    try:
+        r = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": RESEND_FROM, "to": [to], "subject": subject, "html": html},
+            timeout=10,
+        )
+        return r.status_code in (200, 201)
+    except Exception as e:
+        print(f"Email error: {e}")
+        return False
+
+
+def _email_welcome(to: str, full_name: str, username: str, password: str) -> bool:
+    return _send_email(to, "Your AFC Uthiru CMS Account", f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;
+                background:#fff;border-radius:12px;border:1px solid #e2e8f0">
+      <div style="background:#00B4D8;color:#04212F;width:44px;height:44px;border-radius:10px;
+                  display:inline-flex;align-items:center;justify-content:center;
+                  font-weight:800;font-size:14px;margin-bottom:20px">AFC</div>
+      <h2 style="color:#0F2A47;margin:0 0 8px">Welcome, {full_name}</h2>
+      <p style="color:#64748B;margin:0 0 24px">
+        Your account on the AFC Uthiru Church Management System has been created.
+      </p>
+      <div style="background:#F0F4F8;border-radius:8px;padding:16px 20px;margin-bottom:24px">
+        <p style="margin:0 0 4px;color:#475569;font-size:12px;font-weight:600;text-transform:uppercase">Username</p>
+        <p style="margin:0 0 16px;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{username}</p>
+        <p style="margin:0 0 4px;color:#475569;font-size:12px;font-weight:600;text-transform:uppercase">Temporary password</p>
+        <p style="margin:0;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{password}</p>
+      </div>
+      <a href="{FRONTEND_URL}/login"
+         style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;
+                text-decoration:none;padding:12px 24px;border-radius:8px;margin-bottom:20px">
+        Sign in now →
+      </a>
+      <p style="color:#94A3B8;font-size:12px;margin:0">
+        Please change your password after your first login.
+      </p>
+    </div>""")
+
+
+def _email_reset(to: str, full_name: str, token: str) -> bool:
+    reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
+    return _send_email(to, "AFC Uthiru CMS — Password Reset", f"""
+    <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;
+                background:#fff;border-radius:12px;border:1px solid #e2e8f0">
+      <div style="background:#00B4D8;color:#04212F;width:44px;height:44px;border-radius:10px;
+                  display:inline-flex;align-items:center;justify-content:center;
+                  font-weight:800;font-size:14px;margin-bottom:20px">AFC</div>
+      <h2 style="color:#0F2A47;margin:0 0 8px">Password reset request</h2>
+      <p style="color:#64748B;margin:0 0 24px">
+        Hi {full_name}, click the button below to reset your password.
+        This link expires in <strong>1 hour</strong>.
+      </p>
+      <a href="{reset_url}"
+         style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;
+                text-decoration:none;padding:12px 24px;border-radius:8px;margin-bottom:20px">
+        Reset my password →
+      </a>
+      <p style="color:#94A3B8;font-size:12px;margin:0">
+        If you did not request this, ignore this email.
+      </p>
+    </div>""")
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEPARTMENT LOGIC
+# ═══════════════════════════════════════════════════════════════
+
+UPGRADE_STATUSES = {"MARRIED", "DIVORCED", "SEPARATED", "WIDOW/WIDOWER", "SINGLE-PARENT"}
+
+
+def _age(dob_raw: str) -> int | None:
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m/%d/%Y"):
+        try:
+            dob = datetime.strptime(dob_raw.strip(), fmt).date()
+            today = date.today()
+            return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        except Exception:
+            continue
+    return None
+
+
+def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
+    sex    = (sex or "").strip().upper()
+    status = (marital_status or "").strip().upper()
+    age    = _age(dob_raw or "")
+
+    if status in UPGRADE_STATUSES:
+        return "BROTHERS UNION" if sex == "MALE" else "SISTERS UNION"
+
+    if age is not None:
+        if age <= 12:
+            return "SUNDAY SCHOOL"
+        if age <= 17:
+            return "PRE-YOUTH DEPARTMENT"
+        return "YOUTH DEPARTMENT"
+
+    return "YOUTH DEPARTMENT"
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTH HELPERS
+# ═══════════════════════════════════════════════════════════════
+
+def _hash(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(12)).decode()
+
+
+def _verify(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
+
+
+def _make_token(data: dict) -> str:
+    payload = {**data, "exp": datetime.now(timezone.utc) + timedelta(minutes=TOKEN_EXPIRE_MIN)}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _get_user(username: str) -> dict | None:
+    users = sheet_to_list("Users_db")
+    return next(
+        (u for u in users if u.get("USERNAME", "").lower() == username.lower()),
+        None
+    )
+
 
 class CurrentUser(BaseModel):
     username: str
     full_name: str
+    email: str
     is_admin: bool
+    church_branch: str
 
-# ── Spreadsheet Engine Helpers ────────────────────────────────────────────────
-def sheet_to_list(sheet_name: str) -> list[dict]:
-    """Fetch sheet records mapping rows automatically to columns headers."""
-    if not sheets_service:
-        return []
-    try:
-        res = sheets_service.spreadsheets().values().get(
-            spreadsheetId=SPREADSHEET_ID, range=f"{sheet_name}!A1:AZ2000"
-        ).execute()
-        rows = res.get("values", [])
-        if not rows:
-            return []
-        headers = [str(h).strip().upper() for h in rows[0]]
-        items = []
-        for r in rows[1:]:
-            padded = r + [""] * (len(headers) - len(r))
-            items.append(dict(zip(headers, padded)))
-        return items
-    except Exception as e:
-        print(f"Database sheet read breakdown error on '{sheet_name}': {e}")
-        return []
-
-def append_row(sheet_name: str, values: list):
-    """Safely append a sequential data row to the bottom of target sheet table."""
-    if not sheets_service:
-        return
-    sheets_service.spreadsheets().values().append(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1",
-        valueInputOption="USER_ENTERED",
-        body={"values": [values]}
-    ).execute()
-
-def update_row(sheet_name: str, row_index: int, values: list):
-    """Overwrite an entire row cleanly supporting arbitrary column layout matrixing (A to ZZ)."""
-    n = len(values)
-    if n == 0 or not sheets_service:
-        return
-
-    col_str = ""
-    temp = n
-    while temp > 0:
-        temp, remainder = divmod(temp - 1, 26)
-        col_str = chr(65 + remainder) + col_str
-
-    range_a1 = f"{sheet_name}!A{row_index}:{col_str}{row_index}"
-    
-    sheets_service.spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=range_a1,
-        valueInputOption="USER_ENTERED",
-        body={"values": [values]}
-    ).execute()
-
-def next_sn(sheet_name: str) -> int:
-    items = sheet_to_list(sheet_name)
-    if not items:
-        return 1
-    try:
-        return max(int(i.get("S_N", 0) or i.get("s_n", 0)) for i in items) + 1
-    except:
-        return len(items) + 1
-
-# ── Security & Authentication Core ───────────────────────────────────────────
-def _hash(pwd: str) -> str:
-    return bcrypt.hashpw(pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-
-def _verify(pwd: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(pwd.encode("utf-8"), hashed.encode("utf-8"))
-    except:
-        return False
-
-def now_str() -> str:
-    return datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M:%S")
-
-def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=TOKEN_EXPIRY_MIN))
-    to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
-    credentials_exception = HTTPException(
-        status_code=401, detail="Could not validate active security token credentials."
-    )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
+        payload  = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token.")
     except JWTError:
-        raise credentials_exception
+        raise HTTPException(status_code=401, detail="Token expired or invalid.")
 
-    users = sheet_to_list("Users_db")
-    user = next((u for u in users if (u.get("USERNAME") or u.get("username") or "").strip().lower() == username.lower()), None)
-    if not user:
-        raise credentials_exception
+    user = _get_user(username)
+    if not user or str(user.get("IS_ACTIVE", "")).upper() != "TRUE":
+        raise HTTPException(status_code=401, detail="User inactive or not found.")
 
-    user_active_status = str(user.get("IS_ACTIVE") or user.get("is_active") or "TRUE").strip().upper()
-    if user_active_status != "TRUE":
-        raise HTTPException(status_code=403, detail="Your staff account has been deactivated.")
-
-    is_admin = str(user.get("IS_ADMIN") or user.get("is_admin") or "FALSE").strip().upper() == "TRUE"
     return CurrentUser(
-        username=user.get("USERNAME") or user.get("username"),
-        full_name=user.get("FULL_NAME") or user.get("full_name") or user.get("USERNAME") or user.get("username"),
-        is_admin=is_admin
+        username=user["USERNAME"],
+        full_name=user.get("FULL_NAME", ""),
+        email=user.get("EMAIL", ""),
+        is_admin=str(user.get("IS_ADMIN", "")).upper() == "TRUE",
+        church_branch=user.get("CHURCH_BRANCH", "AFC UTHIRU"),
     )
 
-def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-    if not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Access denied. Administrator privileges required.")
-    return current_user
 
-# ── Mock Email Dispatcher Stub ──────────────────────────────────────────────
-def send_system_email(to_email: str, subject: str, body: str):
-    print("================== [SYSTEM EMAIL OUTBOUND LOG] ==================")
-    print(f"TO:      {to_email}")
-    print(f"SUBJECT: {subject}")
-    print(f"BODY:\n{body}")
-    print("=================================================================")
+def require_user(u: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    return u
 
-# ── Dynamic Demographic Pipeline Rules ───────────────────────────────────────
-def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
-    """Deterministic routing mapping members straight to primary target groups."""
-    s = str(sex).upper().strip()
-    m = str(marital_status).upper().strip()
-    
-    if m in ["MARRIED", "WIDOWED", "DIVORCED", "SINGLE PARENT"]:
-        return "BROTHERS UNION" if s == "MALE" else "SISTERS UNION"
 
-    if not dob_raw or str(dob_raw).strip() in ["", "—"]:
-        return "YOUTH DEPARTMENT"
+def require_admin(u: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    if not u.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return u
 
+
+# ═══════════════════════════════════════════════════════════════
+# PYDANTIC MODELS
+# ═══════════════════════════════════════════════════════════════
+
+class CreateUser(BaseModel):
+    username:      str
+    full_name:     str
+    email:         str
+    password:      str
+    is_admin:      bool = False
+    church_branch: Optional[str] = "AFC UTHIRU"
+
+
+class MemberIn(BaseModel):
+    PROFILE_PHOTO_URL:    Optional[str] = None
+    MEMBER_NAME:          str
+    PHYSICAL_ADDRESS:     Optional[str] = None
+    AREA_DESCRIPTION:     Optional[str] = None
+    PHONE:                Optional[str] = None
+    EMAIL:                Optional[str] = None
+    SEX:                  Optional[str] = None
+    MARITAL_STATUS:       Optional[str] = None
+    DATE_OF_BIRTH:        Optional[str] = None
+    OCCUPATION:           Optional[str] = None
+    SUNDAY_SCHOOL_CLASS:  Optional[str] = None
+    DATE_JOINED:          Optional[str] = None
+    HOME_CHURCH:          Optional[str] = "AFC UTHIRU"
+    MEMBERSHIP_STATUS:    Optional[str] = "ACTIVE MEMBER"
+    MEMBERSHIP_NUMBER:    Optional[str] = None
+    SPOUSE_NAME:          Optional[str] = None
+    CONVERSION_DATE:      Optional[str] = None
+    NO_OF_CHILDREN:       Optional[int] = None
+    BAPTISM_DATE:         Optional[str] = None
+    HOLY_SPIRIT_RECEIVED: Optional[str] = None
+    HOLY_SPIRIT_DATE:     Optional[str] = None
+    NOK_NAME:             Optional[str] = None
+    NOK_RELATIONSHIP:     Optional[str] = None
+    NOK_PHONE:            Optional[str] = None
+    NOK_ADDRESS:          Optional[str] = None
+
+
+class DepartmentAdd(BaseModel):
+    department:    str
+    church_branch: Optional[str] = "AFC UTHIRU"
+
+
+class DepartmentOverride(BaseModel):
+    department: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token:        str
+    new_password: str
+
+
+# ═══════════════════════════════════════════════════════════════
+# HEALTH
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/", tags=["Health"])
+def root():
+    return {"status": "online", "system": "AFC Uthiru CMS API v1.2"}
+
+
+@app.get("/api/test-connection", tags=["Health"])
+def test_connection():
     try:
-        dob = datetime.strptime(str(dob_raw).strip(), "%Y-%m-%d").date()
-        today = date.today()
-        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-        
-        if age <= 12:
-            return "SUNDAY SCHOOL"
-        elif age <= 17:
-            return "PRE-YOUTH DEPARTMENT"
-        elif age <= 35:
-            return "YOUTH DEPARTMENT"
-        else:
-            return "BROTHERS UNION" if s == "MALE" else "SISTERS UNION"
-    except:
-        return "YOUTH DEPARTMENT"
+        meta = _service().spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+        return {
+            "connection": "OK",
+            "workbook":   meta.get("properties", {}).get("title"),
+            "sheets":     [s["properties"]["title"] for s in meta.get("sheets", [])],
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
-# ── Authentication Endpoints ──────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════
+# AUTH
+# ═══════════════════════════════════════════════════════════════
+
 @app.post("/api/auth/login", tags=["Auth"])
-def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    username = form_data.username.strip()
-    password = form_data.password
-    
-    try:
-        # 1. Let's see what Spreadsheet the API is actually targeting
-        meta = spreadsheets.get(spreadsheetId=SPREADSHEET_ID).execute()
-        print(f"📡 API CONNECTED TO SPREADSHEET TITLE: '{meta.get('properties', {}).get('title')}' (ID: {SPREADSHEET_ID})")
-        
-        # 2. Let's look at the sheet tabs available
-        sheets_present = [s.get('properties', {}).get('title') for s in meta.get('sheets', [])]
-        print(f"📋 AVAILABLE TABS IN THIS SHEET: {sheets_present}")
-        
-        # 3. Read the columns row
-        res = spreadsheets.values().get(spreadsheetId=SPREADSHEET_ID, range="Users_db!A1:Z1").execute()
-        headers = res.get("values", [[]])[0]
-        print(f"📊 RAW HEADERS FOUND IN 'Users_db': {headers}")
-        
-    except Exception as api_err:
-        print(f"❌ GOOGLE API ERROR DURING DIAGNOSTIC: {api_err}")
+def login(form: OAuth2PasswordRequestForm = Depends()):
+    user = _get_user(form.username)
 
-    # Keep your existing spreadsheet extraction logic below...
-    records = sheet_to_list("Users_db")
-    user_profile = None
-    for r in records:
-        if str(r.get("USERNAME", "")).strip() == username:
-            user_profile = r
-            break
+    if not user or not _verify(form.password, user.get("HASHED_PASSWORD", "")):
+        _audit(form.username, "LOGIN_FAILED", "AUTH", "", "Incorrect username or password.")
+        raise HTTPException(401, "Incorrect username or password.")
 
-    if not user_profile:
-        print(f"❌ LOGIN FAILED: Username '{username}' not found in sheet database columns.")
-        _audit(username, "LOGIN_FAILED", "AUTH", username, "Username not found.")
-        raise HTTPException(status_code=401, detail="Incorrect username or password.")
-        
-    # ... (rest of your login code remains the same)
+    if str(user.get("IS_ACTIVE", "")).upper() != "TRUE":
+        _audit(form.username, "LOGIN_BLOCKED", "AUTH", user.get("S_N", ""), "Inactive account.")
+        raise HTTPException(403, "Account inactive. Contact your admin.")
+
+    token = _make_token({"sub": user["USERNAME"]})
+    _audit(user["USERNAME"], "LOGIN", "AUTH", user.get("S_N", ""), "User logged in.")
+    return {
+        "access_token": token,
+        "token_type":   "bearer",
+        "full_name":    user.get("FULL_NAME", ""),
+        "is_admin":     str(user.get("IS_ADMIN", "")).upper() == "TRUE",
+        "username":     user["USERNAME"],
+    }
+
+
+@app.get("/api/auth/me", tags=["Auth"])
+def me(u: CurrentUser = Depends(require_user)):
+    return {
+        "username":      u.username,
+        "full_name":     u.full_name,
+        "email":         u.email,
+        "is_admin":      u.is_admin,
+        "church_branch": u.church_branch,
+    }
+
 
 @app.post("/api/auth/forgot-password", tags=["Auth"])
-def forgot_password(req: ForgotPasswordRequest):
+def forgot_password(body: ForgotPasswordRequest):
+    """Request a password reset link — sent to the user's registered email."""
     users = sheet_to_list("Users_db")
-    user = next((u for u in users if (u.get("EMAIL") or u.get("email") or "").strip().lower() == req.email.lower()), None)
-    
-    if user:
-        username_val = user.get("USERNAME") or user.get("username")
-        email_val = user.get("EMAIL") or user.get("email")
-        fullname_val = user.get("FULL_NAME") or user.get("full_name") or username_val
+    user  = next((u for u in users if u.get("EMAIL", "").lower() == body.email.lower()), None)
 
-        reset_token = create_token(
-            data={"sub": username_val, "purpose": "password_reset"},
-            expires_delta=timedelta(hours=1)
-        )
-        reset_link = f"http://localhost:5173/reset-password?token={reset_token}"
-        body = (
-            f"Hello {fullname_val},\n\n"
-            f"You requested a password reset for the AFC Uthiru CMS portal.\n"
-            f"Click the link below to configure your new login password:\n{reset_link}\n\n"
-            f"This security link will expire in 1 hour."
-        )
-        send_system_email(email_val, "AFC CMS — Reset Password Request", body)
-        _audit(username_val, "FORGOT_PASSWORD", "AUTH", username_val, "Reset link dispatched to inbox.")
-    
-    return {"detail": "If an account exists with that email, a password reset link has been dispatched."}
+    # Always return success to prevent email enumeration
+    if not user:
+        return {"status": "success", "message": "If that email exists, a reset link has been sent."}
+
+    token      = secrets.token_urlsafe(32)
+    expires_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    sn         = next_sn("ResetTokens_db")
+
+    try:
+        append_row("ResetTokens_db", [sn, body.email, token, expires_at, "FALSE"])
+    except Exception as e:
+        print(f"ResetTokens_db write failed: {e}")
+
+    _email_reset(body.email, user.get("FULL_NAME", ""), token)
+    _audit(user["USERNAME"], "FORGOT_PASSWORD", "AUTH", user.get("S_N", ""), "Password reset token issued.")
+    return {"status": "success", "message": "If that email exists, a reset link has been sent."}
+
 
 @app.post("/api/auth/reset-password", tags=["Auth"])
-def reset_password(req: ResetPasswordRequest):
+def reset_password(body: ResetPasswordRequest):
+    """Consume a reset token and set a new password."""
+    if len(body.new_password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters.")
+
+    tokens    = sheet_to_list("ResetTokens_db")
+    token_row = next((t for t in tokens if t.get("TOKEN", "") == body.token), None)
+
+    if not token_row:
+        raise HTTPException(400, "Invalid or expired reset link.")
+    if str(token_row.get("USED", "")).upper() == "TRUE":
+        raise HTTPException(400, "This reset link has already been used.")
+
     try:
-        payload = jwt.decode(req.token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        purpose = payload.get("purpose")
-        if not username or purpose != "password_reset":
-            raise HTTPException(status_code=400, detail="Invalid token scope configuration.")
-    except JWTError:
-        raise HTTPException(status_code=400, detail="The reset security token link has expired or is invalid.")
+        exp = datetime.strptime(token_row.get("EXPIRES_AT", ""), "%Y-%m-%d %H:%M:%S")
+        if datetime.now() > exp:
+            raise HTTPException(400, "This reset link has expired. Please request a new one.")
+    except ValueError:
+        raise HTTPException(400, "Invalid token expiry.")
 
+    email = token_row.get("EMAIL", "")
     users = sheet_to_list("Users_db")
-    row_idx = None
-    target_user = None
+    user  = next((u for u in users if u.get("EMAIL", "").lower() == email.lower()), None)
+    if not user:
+        raise HTTPException(404, "User not found.")
 
-    for idx, u in enumerate(users, start=2):
-        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
-        if sheet_user == username.lower():
-            row_idx = idx
-            target_user = u
-            break
+    rn = find_row_by_sn("Users_db", user["S_N"])
+    update_row("Users_db", rn, [
+        user["S_N"], user["USERNAME"], user.get("FULL_NAME", ""), user.get("EMAIL", ""),
+        _hash(body.new_password), user.get("IS_ADMIN", "FALSE"), user.get("IS_ACTIVE", "TRUE"),
+        user.get("CREATED_AT", ""), user.get("CHURCH_BRANCH", "AFC UTHIRU"),
+    ])
 
-    if not row_idx or not target_user:
-        raise HTTPException(status_code=404, detail="Target user profile record could not be found.")
+    # Mark token as used
+    token_rn = find_row_by_sn("ResetTokens_db", token_row["S_N"])
+    if token_rn:
+        update_row("ResetTokens_db", token_rn, [
+            token_row["S_N"], email, body.token,
+            token_row.get("EXPIRES_AT", ""), "TRUE"
+        ])
 
-    hashed_pwd = _hash(req.new_password)
-    updated_row_values = [
-        target_user.get("S_N") or target_user.get("s_n") or "",
-        target_user.get("USERNAME") or target_user.get("username") or "",
-        target_user.get("FULL_NAME") or target_user.get("full_name") or "",
-        target_user.get("EMAIL") or target_user.get("email") or "",
-        hashed_pwd,
-        target_user.get("IS_ADMIN") or target_user.get("is_admin") or "FALSE",
-        target_user.get("IS_ACTIVE") or target_user.get("is_active") or "TRUE",
-        target_user.get("CHURCH_BRANCH") or target_user.get("church_branch") or "AFC UTHIRU",
-        now_str()
-    ]
+    _audit(user["USERNAME"], "RESET_PASSWORD", "AUTH", user["S_N"], "Password reset via token.")
+    return {"status": "success", "message": "Password reset successfully. You can now log in."}
 
-    update_row("Users_db", row_idx, updated_row_values)
-    _audit(username, "RESET_PASSWORD", "AUTH", username, "Password updated successfully via valid reset link token.")
-    
-    return {"detail": "Password has been successfully refactored."}
 
-# ── User Administration Endpoints ────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# USERS  (Admin only)
+# ═══════════════════════════════════════════════════════════════
+
 @app.get("/api/users", tags=["Users"])
-def get_users(_: CurrentUser = Depends(require_admin)):
-    records = sheet_to_list("Users_db")
-    clean = []
-    for r in records:
-        c = r.copy()
-        if "PASSWORD" in c:
-            del c["PASSWORD"]
-        if "password" in c:
-            del c["password"]
-        clean.append(c)
-    return clean
+def list_users(_: CurrentUser = Depends(require_admin)):
+    users = sheet_to_list("Users_db")
+    for u in users:
+        u.pop("HASHED_PASSWORD", None)
+    return users
+
 
 @app.post("/api/users", tags=["Users"])
-def create_user(user: UserCreate, current_user: CurrentUser = Depends(require_admin)):
-    users = sheet_to_list("Users_db")
-    if any((u.get("USERNAME") or u.get("username") or "").strip().lower() == user.username.lower() for u in users):
-        raise HTTPException(status_code=400, detail="Username is already occupied.")
-    if any((u.get("EMAIL") or u.get("email") or "").strip().lower() == user.email.lower() for u in users):
-        raise HTTPException(status_code=400, detail="Email address is already in use.")
+def create_user(body: CreateUser, admin: CurrentUser = Depends(require_admin)):
+    existing = sheet_to_list("Users_db")
+    if any(u.get("USERNAME", "").lower() == body.username.lower() for u in existing):
+        raise HTTPException(409, f"Username '{body.username}' already exists.")
 
     sn = next_sn("Users_db")
     append_row("Users_db", [
-        sn, user.username.strip(), user.full_name.strip(), user.email.strip(),
-        _hash(user.password), str(user.is_admin).upper(), "TRUE", user.church_branch.upper(), now_str()
+        sn, body.username, body.full_name, body.email, _hash(body.password),
+        "TRUE" if body.is_admin else "FALSE", "TRUE",
+        datetime.now().strftime("%Y-%m-%d"), body.church_branch,
     ])
 
-    body = (
-        f"Hello {user.full_name},\n\n"
-        f"An administrative worker account has been initialized for you on the AFC Uthiru CMS portal.\n"
-        f"Your active dashboard login profile credentials are:\n"
-        f"Username: {user.username}\n"
-        f"Password: {user.password}\n\n"
-        f"Please alter this temporary credential configuration immediately upon system entry."
-    )
-    send_system_email(user.email, "Welcome to AFC Uthiru CMS Portal", body)
-    _audit(current_user.username, "CREATE_USER", "USERS", user.username, f"Registered account profile for {user.full_name}.")
-    return {"detail": "User account created successfully."}
+    email_sent = False
+    if body.email:
+        email_sent = _email_welcome(body.email, body.full_name, body.username, body.password)
 
-@app.post("/api/users/deactivate/{username}", tags=["Users"])
-def deactivate_user(username: str, current_user: CurrentUser = Depends(require_admin)):
-    if current_user.username.lower() == username.lower():
-        raise HTTPException(status_code=400, detail="Self deactivation actions are blocked.")
+    _audit(admin.username, "CREATE_USER", "USERS", sn,
+           f"Created account '{body.username}' ({'Admin' if body.is_admin else 'Staff'})"
+           f"{' — welcome email sent' if email_sent else ' — no email sent'}")
 
+    return {
+        "status":     "success",
+        "message":    f"User '{body.username}' created."
+                      + (f" Login details sent to {body.email}." if email_sent
+                         else " Share credentials manually."),
+        "sn":         sn,
+        "email_sent": email_sent,
+    }
+
+
+@app.patch("/api/users/{username}/deactivate", tags=["Users"])
+def deactivate_user(username: str, admin: CurrentUser = Depends(require_admin)):
+    if username.lower() == admin.username.lower():
+        raise HTTPException(400, "You cannot deactivate your own account.")
     users = sheet_to_list("Users_db")
-    row_idx = None
-    target_user = None
+    user  = next((u for u in users if u.get("USERNAME", "").lower() == username.lower()), None)
+    if not user:
+        raise HTTPException(404, f"User '{username}' not found.")
+    rn = find_row_by_sn("Users_db", user["S_N"])
+    update_row("Users_db", rn, [
+        user["S_N"], user["USERNAME"], user.get("FULL_NAME", ""), user.get("EMAIL", ""),
+        user.get("HASHED_PASSWORD", ""), user.get("IS_ADMIN", ""), "FALSE",
+        user.get("CREATED_AT", ""), user.get("CHURCH_BRANCH", ""),
+    ])
+    _audit(admin.username, "DEACTIVATE_USER", "USERS", user["S_N"], f"Deactivated '{username}'.")
+    return {"status": "success", "message": f"User '{username}' deactivated."}
 
-    for idx, u in enumerate(users, start=2):
-        sheet_user = (u.get("USERNAME") or u.get("username") or "").strip().lower()
-        if sheet_user == username.lower():
-            row_idx = idx
-            target_user = u
-            break
 
-    if not row_idx or not target_user:
-        raise HTTPException(status_code=404, detail="Target user account profile was not found.")
+@app.patch("/api/users/{username}/reactivate", tags=["Users"])
+def reactivate_user(username: str, admin: CurrentUser = Depends(require_admin)):
+    users = sheet_to_list("Users_db")
+    user  = next((u for u in users if u.get("USERNAME", "").lower() == username.lower()), None)
+    if not user:
+        raise HTTPException(404, f"User '{username}' not found.")
+    rn = find_row_by_sn("Users_db", user["S_N"])
+    update_row("Users_db", rn, [
+        user["S_N"], user["USERNAME"], user.get("FULL_NAME", ""), user.get("EMAIL", ""),
+        user.get("HASHED_PASSWORD", ""), user.get("IS_ADMIN", ""), "TRUE",
+        user.get("CREATED_AT", ""), user.get("CHURCH_BRANCH", ""),
+    ])
+    _audit(admin.username, "REACTIVATE_USER", "USERS", user["S_N"], f"Reactivated '{username}'.")
+    return {"status": "success", "message": f"User '{username}' reactivated."}
 
-    updated_row_values = [
-        target_user.get("S_N") or target_user.get("s_n") or "",
-        target_user.get("USERNAME") or target_user.get("username") or "",
-        target_user.get("FULL_NAME") or target_user.get("full_name") or "",
-        target_user.get("EMAIL") or target_user.get("email") or "",
-        target_user.get("PASSWORD") or target_user.get("password") or "",
-        target_user.get("IS_ADMIN") or target_user.get("is_admin") or "FALSE",
-        "FALSE",
-        target_user.get("CHURCH_BRANCH") or target_user.get("church_branch") or "AFC UTHIRU",
-        now_str()
-    ]
-    
-    update_row("Users_db", row_idx, updated_row_values)
-    _audit(current_user.username, "DEACTIVATE_USER", "USERS", username, "Suspended administrative account security access profiles.")
-    return {"detail": "Account record set to inactive status."}
 
-# ── Members Management Endpoints ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════
+# DEPARTMENTS  (reference)
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/departments", tags=["Departments"])
+def list_departments(_: CurrentUser = Depends(require_user)):
+    return sheet_to_list("Departments_db")
+
+
+# ═══════════════════════════════════════════════════════════════
+# MEMBERS
+# ═══════════════════════════════════════════════════════════════
+
 @app.get("/api/members", tags=["Members"])
-def get_members(_: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Members_db")
-    for r in records:
-        depts_raw = r.get("DEPARTMENTS") or r.get("departments") or ""
-        r["DEPARTMENTS"] = [d.strip() for d in depts_raw.split(",") if d.strip()] if depts_raw else []
-    return records
+def list_members(_: CurrentUser = Depends(require_user)):
+    return sheet_to_list("MemberDetails_db")
+
+
+@app.get("/api/members/search", tags=["Members"])
+def search_members(q: str = "", _: CurrentUser = Depends(require_user)):
+    members = sheet_to_list("MemberDetails_db")
+    if not q:
+        return members
+    ql = q.lower()
+    return [m for m in members if
+            ql in (m.get("MEMBER_NAME", "") or "").lower() or
+            ql in (m.get("PHONE", "") or "").lower() or
+            ql in (m.get("MEMBERSHIP_NUMBER", "") or "").lower() or
+            ql in (m.get("DEPARTMENT_1", "") or "").lower()]
+
+
+@app.get("/api/members/{sn}", tags=["Members"])
+def get_member(sn: str, _: CurrentUser = Depends(require_user)):
+    members = sheet_to_list("MemberDetails_db")
+    m = next((x for x in members if str(x.get("S_N", "")).strip() == sn), None)
+    if not m:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    m["additional_departments"] = [
+        r for r in sheet_to_list("MemberDepartments_db")
+        if str(r.get("MEMBER_SN", "")).strip() == sn
+    ]
+    return m
+
+
+def _build_member_row(sn, body: MemberIn, username: str, existing: dict = None) -> tuple[list, str]:
+    dept1 = derive_department_1(body.SEX or "", body.MARITAL_STATUS or "", body.DATE_OF_BIRTH or "")
+    photo = body.PROFILE_PHOTO_URL or (existing.get("PROFILE_PHOTO_URL", "") if existing else "")
+    mem_no = (body.MEMBERSHIP_NUMBER
+              if body.MEMBERSHIP_NUMBER is not None
+              else (existing.get("MEMBERSHIP_NUMBER", "") if existing else ""))
+    return [
+        sn, photo, body.MEMBER_NAME,
+        body.PHYSICAL_ADDRESS or "", body.AREA_DESCRIPTION or "",
+        body.PHONE or "", body.EMAIL or "",
+        body.SEX or "", body.MARITAL_STATUS or "", body.DATE_OF_BIRTH or "",
+        body.OCCUPATION or "",
+        dept1,                              # DEPARTMENT_1 — auto-derived
+        body.DATE_JOINED or "",
+        body.HOME_CHURCH or "AFC UTHIRU",
+        body.MEMBERSHIP_STATUS or "ACTIVE MEMBER",
+        mem_no,
+        body.SPOUSE_NAME or "",
+        body.CONVERSION_DATE or "",
+        body.NO_OF_CHILDREN or "",
+        body.BAPTISM_DATE or "",
+        body.HOLY_SPIRIT_RECEIVED or "",
+        body.HOLY_SPIRIT_DATE or "",
+        body.NOK_NAME or "",
+        body.NOK_RELATIONSHIP or "",
+        body.NOK_PHONE or "",
+        body.NOK_ADDRESS or "",
+        username,
+        now_str(),
+    ], dept1
+
 
 @app.post("/api/members", tags=["Members"])
-def add_member(m: MemberModel, current_user: CurrentUser = Depends(get_current_user)):
-    sn = next_sn("Members_db")
-    primary_dept = derive_department_1(m.sex, m.marital_status, m.date_of_birth)
-    
-    final_depts = m.departments.copy()
-    if primary_dept not in final_depts:
-        final_depts.insert(0, primary_dept)
+def add_member(body: MemberIn, u: CurrentUser = Depends(require_user)):
+    sn = next_sn("MemberDetails_db")
+    values, dept1 = _build_member_row(sn, body, u.username)
+    append_row("MemberDetails_db", values)
+    _audit(u.username, "ADD_MEMBER", "MEMBERS", sn,
+           f"Registered '{body.MEMBER_NAME}' — dept: {dept1}")
 
-    depts_str = ",".join(final_depts)
-    append_row("Members_db", [
-        sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
-        m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence, m.landmark,
-        m.occupation, m.membership_status.upper(), m.spouse_name, m.no_of_children,
-        m.conversion_date, m.baptism_date, m.holy_spirit_received.upper(), m.holy_spirit_date,
-        m.nok_name, m.nok_relationship, m.nok_phone, m.photo_url, primary_dept, depts_str, now_str()
-    ])
+    # Sunday School sub-classification
+    if dept1 == "SUNDAY SCHOOL" and body.SUNDAY_SCHOOL_CLASS:
+        cls = body.SUNDAY_SCHOOL_CLASS.strip().upper()
+        if cls in ("JUNIOR", "SENIOR"):
+            dsn = next_sn("MemberDepartments_db")
+            append_row("MemberDepartments_db", [
+                dsn, sn, body.MEMBER_NAME, f"SUNDAY SCHOOL - {cls}",
+                datetime.now().strftime("%Y-%m-%d"), u.username,
+                body.HOME_CHURCH or "AFC UTHIRU",
+            ])
 
-    _audit(current_user.username, "ADD_MEMBER", "MEMBERS", str(sn), f"Registered core profile record for {m.full_name}.")
-    return {"detail": "Member record created safely."}
+    return {"status": "success", "sn": sn, "department_1": dept1,
+            "message": f"Member '{body.MEMBER_NAME}' registered. Primary dept: {dept1}."}
+
 
 @app.put("/api/members/{sn}", tags=["Members"])
-def update_member(sn: str, m: MemberModel, current_user: CurrentUser = Depends(get_current_user)):
-    members = sheet_to_list("Members_db")
-    row_idx = None
-    for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
-            row_idx = idx
-            break
+def update_member(sn: str, body: MemberIn, u: CurrentUser = Depends(require_user)):
+    members  = sheet_to_list("MemberDetails_db")
+    existing = next((m for m in members if str(m.get("S_N", "")).strip() == sn), None)
+    if not existing:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    rn = find_row_by_sn("MemberDetails_db", sn)
+    values, dept1 = _build_member_row(sn, body, u.username, existing)
+    # Preserve existing DEPARTMENT_1 — not re-derived on update
+    values[11] = existing.get("DEPARTMENT_1", dept1)
+    update_row("MemberDetails_db", rn, values)
+    _audit(u.username, "UPDATE_MEMBER", "MEMBERS", sn, f"Updated member '{body.MEMBER_NAME}'")
+    return {"status": "success", "message": f"Member '{sn}' updated.",
+            "department_1": values[11]}
 
-    if not row_idx:
-        raise HTTPException(status_code=404, detail="Target tracking member index row was not found.")
-
-    primary_dept = derive_department_1(m.sex, m.marital_status, m.date_of_birth)
-    final_depts = m.departments.copy()
-    if primary_dept not in final_depts:
-        final_depts.insert(0, primary_dept)
-
-    depts_str = ",".join(final_depts)
-    update_row("Members_db", row_idx, [
-        sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
-        m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence, m.landmark,
-        m.occupation, m.membership_status.upper(), m.spouse_name, m.no_of_children,
-        m.conversion_date, m.baptism_date, m.holy_spirit_received.upper(), m.holy_spirit_date,
-        m.nok_name, m.nok_relationship, m.nok_phone, m.photo_url, primary_dept, depts_str, now_str()
-    ])
-
-    _audit(current_user.username, "UPDATE_MEMBER", "MEMBERS", str(sn), f"Altered details for tracking record {m.full_name}.")
-    return {"detail": "Member information synchronized successfully."}
 
 @app.delete("/api/members/{sn}", tags=["Members"])
-def delete_member(sn: str, current_user: CurrentUser = Depends(get_current_user)):
-    members = sheet_to_list("Members_db")
-    row_idx = None
-    target_name = "Unknown"
+def delete_member(sn: str, u: CurrentUser = Depends(require_admin)):
+    members  = sheet_to_list("MemberDetails_db")
+    existing = next((m for m in members if str(m.get("S_N", "")).strip() == sn), None)
+    if not existing:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    rn = find_row_by_sn("MemberDetails_db", sn)
+    clear_row("MemberDetails_db", rn)
+    _audit(u.username, "DELETE_MEMBER", "MEMBERS", sn,
+           f"Deleted member '{existing.get('MEMBER_NAME', '')}'")
+    return {"status": "success", "message": f"Member '{sn}' deleted."}
 
-    for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
-            row_idx = idx
-            target_name = row.get("FULL_NAME") or row.get("full_name") or "Unknown"
-            break
 
-    if not row_idx:
-        raise HTTPException(status_code=404, detail="Target member reference not found.")
-
-    if not sheets_service:
-        raise HTTPException(status_code=500, detail="Spreadsheet connection is unavailable.")
-
-    res = sheets_service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    sheet_id = next(s["properties"]["sheetId"] for s in res["sheets"] if s["properties"]["title"] == "Members_db")
-
-    body = {
-        "requests": [{
-            "deleteDimension": {
-                "range": {
-                    "sheetId": sheet_id,
-                    "dimension": "ROWS",
-                    "startIndex": row_idx - 1,
-                    "endIndex": row_idx
-                }
-            }
-        }]
-    }
-    sheets_service.spreadsheets().batchUpdate(spreadsheetId=SPREADSHEET_ID, body=body).execute()
-    _audit(current_user.username, "DELETE_MEMBER", "MEMBERS", str(sn), f"Purged member row profile belonging to: {target_name}.")
-    return {"detail": "Member profile row deleted successfully."}
-
-@app.post("/api/members/{sn}/override-department", tags=["Members"])
-def override_department(sn: str, req: OverrideDeptRequest, current_user: CurrentUser = Depends(require_admin)):
-    members = sheet_to_list("Members_db")
-    row_idx = None
-    target_member = None
-
-    for idx, row in enumerate(members, start=2):
-        if str(row.get("S_N") or row.get("s_n") or "") == str(sn):
-            row_idx = idx
-            target_member = row
-            break
-
-    if not row_idx or not target_member:
-        raise HTTPException(status_code=404, detail="Member matching structural lookup index reference not found.")
-
-    depts_raw = target_member.get("DEPARTMENTS") or target_member.get("departments") or ""
-    current_depts = [d.strip() for d in depts_raw.split(",") if d.strip()] if depts_raw else []
-    
-    if req.department not in current_depts:
-        current_depts.insert(0, req.department)
-    else:
-        current_depts.remove(req.department)
-        current_depts.insert(0, req.department)
-
-    depts_str = ",".join(current_depts)
-    
-    def g(key, default=""):
-        return target_member.get(key.upper()) or target_member.get(key.lower()) or default
-
-    update_row("Members_db", row_idx, [
-        g("s_n"), g("membership_number"), g("full_name"),
-        g("phone_number"), g("email"), g("sex"),
-        g("marital_status"), g("date_of_birth"), g("residence"),
-        g("landmark"), g("occupation"), g("membership_status"),
-        g("spouse_name"), g("no_of_children"), g("conversion_date"),
-        g("baptism_date"), g("holy_spirit_received"), g("holy_spirit_date"),
-        g("nok_name"), g("nok_relationship"), g("nok_phone"),
-        g("photo_url"), req.department, depts_str, now_str()
+@app.patch("/api/members/{sn}/department", tags=["Members"])
+def override_department(sn: str, body: DepartmentOverride, u: CurrentUser = Depends(require_admin)):
+    """Admin only — manually override DEPARTMENT_1."""
+    members  = sheet_to_list("MemberDetails_db")
+    existing = next((m for m in members if str(m.get("S_N", "")).strip() == sn), None)
+    if not existing:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    old_dept = existing.get("DEPARTMENT_1", "")
+    rn = find_row_by_sn("MemberDetails_db", sn)
+    update_row("MemberDetails_db", rn, [
+        existing.get("S_N", sn),
+        existing.get("PROFILE_PHOTO_URL", ""),
+        existing.get("MEMBER_NAME", ""),
+        existing.get("PHYSICAL_ADDRESS", ""),
+        existing.get("AREA_DESCRIPTION", ""),
+        existing.get("PHONE", ""),
+        existing.get("EMAIL", ""),
+        existing.get("SEX", ""),
+        existing.get("MARITAL_STATUS", ""),
+        existing.get("DATE_OF_BIRTH", ""),
+        existing.get("OCCUPATION", ""),
+        body.department,                    # DEPARTMENT_1 overridden
+        existing.get("DATE_JOINED", ""),
+        existing.get("HOME_CHURCH", "AFC UTHIRU"),
+        existing.get("MEMBERSHIP_STATUS", ""),
+        existing.get("MEMBERSHIP_NUMBER", ""),
+        existing.get("SPOUSE_NAME", ""),
+        existing.get("CONVERSION_DATE", ""),
+        existing.get("NO_OF_CHILDREN", ""),
+        existing.get("BAPTISM_DATE", ""),
+        existing.get("HOLY_SPIRIT_RECEIVED", ""),
+        existing.get("HOLY_SPIRIT_DATE", ""),
+        existing.get("NOK_NAME", ""),
+        existing.get("NOK_RELATIONSHIP", ""),
+        existing.get("NOK_PHONE", ""),
+        existing.get("NOK_ADDRESS", ""),
+        u.username,
+        now_str(),
     ])
+    _audit(u.username, "OVERRIDE_DEPARTMENT", "MEMBERS", sn,
+           f"Changed dept for '{existing.get('MEMBER_NAME','')}': '{old_dept}' → '{body.department}'")
+    return {"status": "success",
+            "message": f"Department overridden to '{body.department}' for member '{sn}'."}
 
-    _audit(current_user.username, "OVERRIDE_DEPARTMENT", "MEMBERS", str(sn), 
-           f"Forced manual primary department realignment to '{req.department}' for {g('full_name')}.")
-    return {"detail": "Primary structural department mapping overriden successfully."}
 
-# ── Audit Infrastructure Core ───────────────────────────────────────────────
-def _audit(username: str, action: str, module: str, item_id: str, description: str):
-    """Write an audit entry. Never raises — audit must not break main flow."""
-    try:
-        sn = next_sn("AuditLog_db")
-        append_row("AuditLog_db", [sn, now_str(), username, action, module, item_id, description])
-    except Exception as e:
-        print(f"Audit log writing fallback breakdown error: {e}")
+@app.get("/api/members/{sn}/departments", tags=["Members"])
+def get_member_departments(sn: str, _: CurrentUser = Depends(require_user)):
+    members = sheet_to_list("MemberDetails_db")
+    member  = next((m for m in members if str(m.get("S_N", "")).strip() == sn), None)
+    if not member:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    extra = [r for r in sheet_to_list("MemberDepartments_db")
+             if str(r.get("MEMBER_SN", "")).strip() == sn]
+    return {
+        "member_sn":   sn,
+        "member_name": member.get("MEMBER_NAME", ""),
+        "department_1": {"department": member.get("DEPARTMENT_1", ""), "mandatory": True},
+        "extra_departments": [
+            {"s_n": r.get("S_N"), "department": r.get("DEPARTMENT"),
+             "date_assigned": r.get("DATE_ASSIGNED"), "assigned_by": r.get("ASSIGNED_BY")}
+            for r in extra
+        ],
+    }
+
+
+@app.post("/api/members/{sn}/departments", tags=["Members"])
+def add_member_department(sn: str, body: DepartmentAdd, u: CurrentUser = Depends(require_user)):
+    members = sheet_to_list("MemberDetails_db")
+    member  = next((m for m in members if str(m.get("S_N", "")).strip() == sn), None)
+    if not member:
+        raise HTTPException(404, f"Member '{sn}' not found.")
+    if body.department.strip().upper() == member.get("DEPARTMENT_1", "").strip().upper():
+        raise HTTPException(409, "That is already this member's primary department.")
+    extra = sheet_to_list("MemberDepartments_db")
+    if any(str(r.get("MEMBER_SN", "")).strip() == sn and
+           r.get("DEPARTMENT", "").strip().upper() == body.department.strip().upper()
+           for r in extra):
+        raise HTTPException(409, f"Member already assigned to '{body.department}'.")
+    dsn = next_sn("MemberDepartments_db")
+    append_row("MemberDepartments_db", [
+        dsn, sn, member.get("MEMBER_NAME", ""), body.department,
+        datetime.now().strftime("%Y-%m-%d"), u.username, body.church_branch,
+    ])
+    _audit(u.username, "ADD_MEMBER_DEPARTMENT", "MEMBERS", sn,
+           f"Added '{body.department}' to '{member.get('MEMBER_NAME','')}'")
+    return {"status": "success", "message": f"'{body.department}' added to member '{sn}'."}
+
+
+@app.delete("/api/members/{sn}/departments/{dept_sn}", tags=["Members"])
+def remove_member_department(sn: str, dept_sn: str, u: CurrentUser = Depends(require_user)):
+    rn = find_row_by_sn("MemberDepartments_db", dept_sn)
+    if not rn:
+        raise HTTPException(404, "Department assignment not found.")
+    clear_row("MemberDepartments_db", rn)
+    _audit(u.username, "REMOVE_MEMBER_DEPARTMENT", "MEMBERS", sn,
+           f"Removed department assignment '{dept_sn}'")
+    return {"status": "success", "message": "Department removed."}
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT  (read endpoints — admin only)
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/audit", tags=["Audit"])
 def get_audit_log(_: CurrentUser = Depends(require_admin)):
-    records = sheet_to_list("AuditLog_db")
-    return list(reversed(records))
+    """Full audit trail, newest first."""
+    return list(reversed(sheet_to_list("AuditLog_db")))
+
 
 @app.get("/api/audit/search", tags=["Audit"])
 def search_audit_log(q: str = "", action: str = "", module: str = "",
                      _: CurrentUser = Depends(require_admin)):
-    """Admin only — filter audit trail by free-text, action, and/or module."""
+    """Filter audit trail by free-text, action, and/or module."""
     records = list(reversed(sheet_to_list("AuditLog_db")))
     if action:
-        records = [r for r in records if (r.get("ACTION") or r.get("action") or "").upper() == action.upper()]
+        records = [r for r in records if r.get("ACTION", "").upper() == action.upper()]
     if module:
-        records = [r for r in records if (r.get("MODULE") or r.get("module") or "").upper() == module.upper()]
+        records = [r for r in records if r.get("MODULE", "").upper() == module.upper()]
     if q:
-        q_low = q.lower()
-        records = [
-            r for r in records if 
-            q_low in (r.get("USERNAME") or r.get("username") or "").lower() or 
-            q_low in (r.get("DESCRIPTION") or r.get("description") or "").lower() or 
-            q_low in (r.get("ITEM_ID") or r.get("item_id") or "").lower()
-        ]
+        ql = q.lower()
+        records = [r for r in records if
+                   ql in (r.get("USERNAME", "") or "").lower() or
+                   ql in (r.get("DESCRIPTION", "") or "").lower() or
+                   ql in (r.get("ITEM_ID", "") or "").lower()]
     return records
