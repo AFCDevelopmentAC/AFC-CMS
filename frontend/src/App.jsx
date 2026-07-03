@@ -32,7 +32,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* ── Public routes (no shell, no auth required) ── */}
+          {/* ── Public routes (no login required, no AppShell) ── */}
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
@@ -47,7 +47,7 @@ export default function App() {
           >
             <Route path="/members" element={<Members />} />
 
-            {/* Admin-only routes */}
+            {/* Admin-only */}
             <Route
               path="/users"
               element={
