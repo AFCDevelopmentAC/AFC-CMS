@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import "./Services.css";
 
 const GROUP_OPTIONS = [
-  "ALL MEMBERS","YOUTH","CHILDREN","MEN","WOMEN","CHOIR",
-  "MARRIED COUPLES","SINGLES","NEW CONVERTS","OTHERS"
+  "ALL MEMBERS", "YOUTH", "CHILDREN", "MEN", "WOMEN", "CHOIR",
+  "MARRIED COUPLES", "SINGLES", "NEW CONVERTS", "OTHERS"
 ];
 
 const EMPTY = {
@@ -14,6 +15,7 @@ const EMPTY = {
 };
 
 export default function Events() {
+  const navigate = useNavigate();
   const [events, setEvents]       = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
@@ -36,7 +38,9 @@ export default function Events() {
 
   useEffect(() => { load(); }, []);
 
-  function openNew() { setEditing(null); setForm(EMPTY); setFormError(""); setShowForm(true); }
+  function openNew() {
+    setEditing(null); setForm(EMPTY); setFormError(""); setShowForm(true);
+  }
 
   function openEdit(ev) {
     setEditing(ev.S_N);
@@ -73,9 +77,11 @@ export default function Events() {
   const filtered = events.filter(ev => {
     const matchStatus = filterStatus === "ALL" || ev.STATUS === filterStatus;
     const q = search.toLowerCase();
-    const matchSearch = !q || (ev.EVENT_TITLE||"").toLowerCase().includes(q) ||
-      (ev.EVENT_DATE||"").includes(q) || (ev.EVENT_LOCATION||"").toLowerCase().includes(q) ||
-      (ev.S_N||"").toLowerCase().includes(q);
+    const matchSearch = !q ||
+      (ev.EVENT_TITLE || "").toLowerCase().includes(q) ||
+      (ev.EVENT_DATE || "").includes(q) ||
+      (ev.EVENT_LOCATION || "").toLowerCase().includes(q) ||
+      (ev.S_N || "").toLowerCase().includes(q);
     return matchStatus && matchSearch;
   });
 
@@ -90,57 +96,60 @@ export default function Events() {
       </div>
 
       <div className="svc-toolbar">
-        <input className="svc-search" placeholder="Search title, date, location…"
+        <input className="svc-search" placeholder="Search title, date, location..."
           value={search} onChange={e => setSearch(e.target.value)} />
         <div className="svc-filter-tabs">
-          {["ALL","PAST","UPCOMING"].map(f => (
-            <button key={f} className={`svc-tab ${filterStatus===f?"active":""}`}
+          {["ALL", "PAST", "UPCOMING"].map(f => (
+            <button key={f} className={`svc-tab ${filterStatus === f ? "active" : ""}`}
               onClick={() => setFilter(f)}>{f}</button>
           ))}
         </div>
       </div>
 
       {error && <div className="svc-error">{error}</div>}
-      {loading ? <div className="svc-loading">Loading events…</div> : (
-        filtered.length === 0 ? (
-          <div className="svc-empty">No events found. Click <strong>+ New Event</strong> to add one.</div>
-        ) : (
-          <div className="svc-table-wrap">
-            <table className="svc-table">
-              <thead><tr>
+
+      {loading ? (
+        <div className="svc-loading">Loading events...</div>
+      ) : filtered.length === 0 ? (
+        <div className="svc-empty">No events found. Click <strong>+ New Event</strong> to add one.</div>
+      ) : (
+        <div className="svc-table-wrap">
+          <table className="svc-table">
+            <thead>
+              <tr>
                 <th>ID</th><th>Title</th><th>Date</th><th>Location</th>
                 <th>Attendance</th><th>Status</th><th>Actions</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(ev => (
-                  <tr key={ev.S_N}>
-                    <td className="svc-mono">{ev.S_N}</td>
-                    <td><strong>{ev.EVENT_TITLE}</strong></td>
-                    <td>{ev.EVENT_DATE}</td>
-                    <td>{ev.EVENT_LOCATION || "—"}</td>
-                    <td className="svc-count">{ev.TOTAL_ATTENDANCE || 0}</td>
-                    <td><span className={`svc-badge svc-badge-${(ev.STATUS||"").toLowerCase()}`}>
-                      {ev.STATUS || "—"}
-                    </span></td>
-                    <td className="svc-actions">
-                      <button className="svc-btn-sm" onClick={() => openEdit(ev)}>Edit</button>
-                      {ev.STATUS === "PAST" && (
-                        <a className="svc-btn-sm svc-btn-attend"
-                          href={`/attendance/EVENT/${ev.S_N}`}>Attendance</a>
-                      )}
-                      <a className="svc-btn-sm svc-btn-report"
-                        href={`/reports/event/${ev.S_N}`} target="_blank" rel="noreferrer">
-                        Report
-                      </a>
-                      <button className="svc-btn-sm svc-btn-del"
-                        onClick={() => handleDelete(ev.S_N)}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(ev => (
+                <tr key={ev.S_N}>
+                  <td className="svc-mono">{ev.S_N}</td>
+                  <td><strong>{ev.EVENT_TITLE}</strong></td>
+                  <td>{ev.EVENT_DATE}</td>
+                  <td>{ev.EVENT_LOCATION || "-"}</td>
+                  <td className="svc-count">{ev.TOTAL_ATTENDANCE || 0}</td>
+                  <td>
+                    <span className={`svc-badge svc-badge-${(ev.STATUS || "").toLowerCase()}`}>
+                      {ev.STATUS || "-"}
+                    </span>
+                  </td>
+                  <td className="svc-actions">
+                    <button className="svc-btn-sm" onClick={() => openEdit(ev)}>Edit</button>
+                    {ev.STATUS === "PAST" && (
+                      <button className="svc-btn-sm svc-btn-attend"
+                        onClick={() => navigate(`/attendance/EVENT/${ev.S_N}`)}>
+                        Attendance
+                      </button>
+                    )}
+                    <button className="svc-btn-sm svc-btn-del"
+                      onClick={() => handleDelete(ev.S_N)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {showForm && (
@@ -148,48 +157,48 @@ export default function Events() {
           <div className="svc-modal" onClick={e => e.stopPropagation()}>
             <div className="svc-modal-header">
               <h2>{editing ? "Edit Event" : "New Event"}</h2>
-              <button className="svc-modal-close" onClick={() => setShowForm(false)}>✕</button>
+              <button className="svc-modal-close" onClick={() => setShowForm(false)}>x</button>
             </div>
             <form onSubmit={handleSubmit} className="svc-form">
               {formError && <div className="svc-form-error">{formError}</div>}
 
               <div className="svc-form-section">Event Details</div>
-              <div className="svc-field svc-field-full">
+              <div className="svc-field">
                 <label>Event Title *</label>
                 <input value={form.event_title}
-                  onChange={e => setForm({...form, event_title: e.target.value})}
+                  onChange={e => setForm({ ...form, event_title: e.target.value })}
                   placeholder="e.g. Annual Thanksgiving Service" required />
               </div>
-              <div className="svc-field svc-field-full">
+              <div className="svc-field">
                 <label>Description</label>
                 <input value={form.event_description}
-                  onChange={e => setForm({...form, event_description: e.target.value})}
-                  placeholder="Brief description of the event" />
+                  onChange={e => setForm({ ...form, event_description: e.target.value })}
+                  placeholder="Brief description" />
               </div>
               <div className="svc-row">
                 <div className="svc-field">
                   <label>Date *</label>
                   <input type="date" value={form.event_date}
-                    onChange={e => setForm({...form, event_date: e.target.value})} required />
+                    onChange={e => setForm({ ...form, event_date: e.target.value })} required />
                 </div>
                 <div className="svc-field">
                   <label>Time</label>
                   <input type="time" value={form.event_time}
-                    onChange={e => setForm({...form, event_time: e.target.value})} />
+                    onChange={e => setForm({ ...form, event_time: e.target.value })} />
                 </div>
               </div>
               <div className="svc-row">
                 <div className="svc-field">
                   <label>Location</label>
                   <input value={form.event_location}
-                    onChange={e => setForm({...form, event_location: e.target.value})}
+                    onChange={e => setForm({ ...form, event_location: e.target.value })}
                     placeholder="Venue / address" />
                 </div>
                 <div className="svc-field">
                   <label>Targeted Group</label>
                   <select value={form.targeted_group}
-                    onChange={e => setForm({...form, targeted_group: e.target.value})}>
-                    <option value="">— Select —</option>
+                    onChange={e => setForm({ ...form, targeted_group: e.target.value })}>
+                    <option value="">-- Select --</option>
                     {GROUP_OPTIONS.map(o => <option key={o}>{o}</option>)}
                   </select>
                 </div>
@@ -198,14 +207,14 @@ export default function Events() {
                 <div className="svc-field">
                   <label>Pastor / Minister in Charge</label>
                   <input value={form.pastor_in_charge}
-                    onChange={e => setForm({...form, pastor_in_charge: e.target.value})}
+                    onChange={e => setForm({ ...form, pastor_in_charge: e.target.value })}
                     placeholder="Name" />
                 </div>
                 <div className="svc-field">
                   <label>Contact Phone</label>
                   <input value={form.phone}
-                    onChange={e => setForm({...form, phone: e.target.value})}
-                    placeholder="+254…" />
+                    onChange={e => setForm({ ...form, phone: e.target.value })}
+                    placeholder="+254..." />
                 </div>
               </div>
 
@@ -213,7 +222,7 @@ export default function Events() {
                 <button type="button" className="svc-btn-ghost"
                   onClick={() => setShowForm(false)}>Cancel</button>
                 <button type="submit" className="svc-btn-primary" disabled={saving}>
-                  {saving ? "Saving…" : editing ? "Update Event" : "Create Event"}
+                  {saving ? "Saving..." : editing ? "Update Event" : "Create Event"}
                 </button>
               </div>
             </form>

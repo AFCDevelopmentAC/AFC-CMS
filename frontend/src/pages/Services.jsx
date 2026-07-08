@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import api from "../api/axios";
 import "./Services.css";
 
@@ -9,14 +10,13 @@ const NATURE_OPTIONS = [
 ];
 
 const EMPTY = {
-  date: "", nature_of_service: "", opening_time: "", closing_time: "",
-  preacher: "", scripture_reading: "", sermon_topic: "",
-  tithes: "", offering: "", building_offering: "", thanksgiving: "",
-  seed_offering: "", welfare_offering: "", other_offering: "",
-  church_branch: "AFC UTHIRU"
+  date: "", nature_of_service: "", opening_time: "",
+  closing_time: "", preacher: "", scripture_reading: "",
+  sermon_topic: "", church_branch: "AFC UTHIRU"
 };
 
 export default function Services() {
+  const navigate = useNavigate();
   const [services, setServices]   = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
@@ -40,10 +40,7 @@ export default function Services() {
   useEffect(() => { load(); }, []);
 
   function openNew() {
-    setEditing(null);
-    setForm(EMPTY);
-    setFormError("");
-    setShowForm(true);
+    setEditing(null); setForm(EMPTY); setFormError(""); setShowForm(true);
   }
 
   function openEdit(s) {
@@ -52,30 +49,19 @@ export default function Services() {
       date: s.DATE || "", nature_of_service: s.NATURE_OF_SERVICE || "",
       opening_time: s.OPENING_TIME || "", closing_time: s.CLOSING_TIME || "",
       preacher: s.PREACHER || "", scripture_reading: s.SCRIPTURE_READING || "",
-      sermon_topic: s.SERMON_TOPIC || "",
-      tithes: s.TITHES || "", offering: s.OFFERING || "",
-      building_offering: s.BUILDING_OFFERING || "",
-      thanksgiving: s.THANKSGIVING || "", seed_offering: s.SEED_OFFERING || "",
-      welfare_offering: s.WELFARE_OFFERING || "", other_offering: s.OTHER_OFFERING || "",
-      church_branch: s.CHURCH_BRANCH || "AFC UTHIRU"
+      sermon_topic: s.SERMON_TOPIC || "", church_branch: s.CHURCH_BRANCH || "AFC UTHIRU"
     });
-    setFormError("");
-    setShowForm(true);
+    setFormError(""); setShowForm(true);
   }
 
   async function handleSubmit(e) {
-    e.preventDefault();
-    setFormError("");
+    e.preventDefault(); setFormError("");
     if (!form.date) { setFormError("Date is required."); return; }
     setSaving(true);
     try {
-      if (editing) {
-        await api.put(`/api/services/${editing}`, form);
-      } else {
-        await api.post("/api/services", form);
-      }
-      setShowForm(false);
-      load();
+      if (editing) await api.put(`/api/services/${editing}`, form);
+      else await api.post("/api/services", form);
+      setShowForm(false); load();
     } catch (err) {
       setFormError(err?.response?.data?.detail || "Could not save service.");
     } finally { setSaving(false); }
@@ -83,16 +69,15 @@ export default function Services() {
 
   async function handleDelete(sn) {
     if (!window.confirm("Delete this service record?")) return;
-    try {
-      await api.delete(`/api/services/${sn}`);
-      load();
-    } catch { alert("Could not delete service."); }
+    try { await api.delete(`/api/services/${sn}`); load(); }
+    catch { alert("Could not delete service."); }
   }
 
   const filtered = services.filter(s => {
     const matchStatus = filterStatus === "ALL" || s.STATUS === filterStatus;
     const q = search.toLowerCase();
-    const matchSearch = !q || (s.DATE || "").includes(q) ||
+    const matchSearch = !q ||
+      (s.DATE || "").includes(q) ||
       (s.NATURE_OF_SERVICE || "").toLowerCase().includes(q) ||
       (s.PREACHER || "").toLowerCase().includes(q) ||
       (s.S_N || "").toLowerCase().includes(q);
@@ -110,59 +95,60 @@ export default function Services() {
       </div>
 
       <div className="svc-toolbar">
-        <input className="svc-search" placeholder="Search date, preacher, type…"
+        <input className="svc-search" placeholder="Search date, preacher, type..."
           value={search} onChange={e => setSearch(e.target.value)} />
         <div className="svc-filter-tabs">
-          {["ALL","PAST","UPCOMING"].map(f => (
-            <button key={f} className={`svc-tab ${filterStatus===f?"active":""}`}
+          {["ALL", "PAST", "UPCOMING"].map(f => (
+            <button key={f} className={`svc-tab ${filterStatus === f ? "active" : ""}`}
               onClick={() => setFilter(f)}>{f}</button>
           ))}
         </div>
       </div>
 
       {error && <div className="svc-error">{error}</div>}
-      {loading ? <div className="svc-loading">Loading services…</div> : (
-        filtered.length === 0 ? (
-          <div className="svc-empty">No services found. Click <strong>+ New Service</strong> to add one.</div>
-        ) : (
-          <div className="svc-table-wrap">
-            <table className="svc-table">
-              <thead><tr>
+
+      {loading ? (
+        <div className="svc-loading">Loading services...</div>
+      ) : filtered.length === 0 ? (
+        <div className="svc-empty">No services found. Click <strong>+ New Service</strong> to add one.</div>
+      ) : (
+        <div className="svc-table-wrap">
+          <table className="svc-table">
+            <thead>
+              <tr>
                 <th>ID</th><th>Date</th><th>Type</th><th>Preacher</th>
                 <th>Attendance</th><th>Status</th><th>Actions</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map(s => (
-                  <tr key={s.S_N}>
-                    <td className="svc-mono">{s.S_N}</td>
-                    <td>{s.DATE}</td>
-                    <td>{s.NATURE_OF_SERVICE || "—"}</td>
-                    <td>{s.PREACHER || "—"}</td>
-                    <td className="svc-count">{s.TOTAL_ATTENDANCE || 0}</td>
-                    <td><span className={`svc-badge svc-badge-${(s.STATUS||"").toLowerCase()}`}>
-                      {s.STATUS || "—"}
-                    </span></td>
-                    <td className="svc-actions">
-                      <button className="svc-btn-sm" onClick={() => openEdit(s)}>Edit</button>
-                      {s.STATUS === "PAST" && (
-                        <a className="svc-btn-sm svc-btn-attend"
-                          href={`/attendance/SERVICE/${s.S_N}`}>
-                          Attendance
-                        </a>
-                      )}
-                      <a className="svc-btn-sm svc-btn-report"
-                        href={`/reports/service/${s.S_N}`} target="_blank" rel="noreferrer">
-                        Report
-                      </a>
-                      <button className="svc-btn-sm svc-btn-del"
-                        onClick={() => handleDelete(s.S_N)}>Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(s => (
+                <tr key={s.S_N}>
+                  <td className="svc-mono">{s.S_N}</td>
+                  <td>{s.DATE}</td>
+                  <td>{s.NATURE_OF_SERVICE || "-"}</td>
+                  <td>{s.PREACHER || "-"}</td>
+                  <td className="svc-count">{s.TOTAL_ATTENDANCE || 0}</td>
+                  <td>
+                    <span className={`svc-badge svc-badge-${(s.STATUS || "").toLowerCase()}`}>
+                      {s.STATUS || "-"}
+                    </span>
+                  </td>
+                  <td className="svc-actions">
+                    <button className="svc-btn-sm" onClick={() => openEdit(s)}>Edit</button>
+                    {s.STATUS === "PAST" && (
+                      <button className="svc-btn-sm svc-btn-attend"
+                        onClick={() => navigate(`/attendance/SERVICE/${s.S_N}`)}>
+                        Attendance
+                      </button>
+                    )}
+                    <button className="svc-btn-sm svc-btn-del"
+                      onClick={() => handleDelete(s.S_N)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {showForm && (
@@ -170,7 +156,7 @@ export default function Services() {
           <div className="svc-modal" onClick={e => e.stopPropagation()}>
             <div className="svc-modal-header">
               <h2>{editing ? "Edit Service" : "New Service"}</h2>
-              <button className="svc-modal-close" onClick={() => setShowForm(false)}>✕</button>
+              <button className="svc-modal-close" onClick={() => setShowForm(false)}>x</button>
             </div>
             <form onSubmit={handleSubmit} className="svc-form">
               {formError && <div className="svc-form-error">{formError}</div>}
@@ -180,13 +166,13 @@ export default function Services() {
                 <div className="svc-field">
                   <label>Date *</label>
                   <input type="date" value={form.date}
-                    onChange={e => setForm({...form, date: e.target.value})} required />
+                    onChange={e => setForm({ ...form, date: e.target.value })} required />
                 </div>
                 <div className="svc-field">
                   <label>Nature of Service</label>
                   <select value={form.nature_of_service}
-                    onChange={e => setForm({...form, nature_of_service: e.target.value})}>
-                    <option value="">— Select —</option>
+                    onChange={e => setForm({ ...form, nature_of_service: e.target.value })}>
+                    <option value="">-- Select --</option>
                     {NATURE_OPTIONS.map(o => <option key={o}>{o}</option>)}
                   </select>
                 </div>
@@ -195,53 +181,40 @@ export default function Services() {
                 <div className="svc-field">
                   <label>Opening Time</label>
                   <input type="time" value={form.opening_time}
-                    onChange={e => setForm({...form, opening_time: e.target.value})} />
+                    onChange={e => setForm({ ...form, opening_time: e.target.value })} />
                 </div>
                 <div className="svc-field">
                   <label>Closing Time</label>
                   <input type="time" value={form.closing_time}
-                    onChange={e => setForm({...form, closing_time: e.target.value})} />
+                    onChange={e => setForm({ ...form, closing_time: e.target.value })} />
                 </div>
               </div>
               <div className="svc-row">
                 <div className="svc-field">
                   <label>Preacher</label>
                   <input value={form.preacher}
-                    onChange={e => setForm({...form, preacher: e.target.value})}
+                    onChange={e => setForm({ ...form, preacher: e.target.value })}
                     placeholder="Name of preacher" />
                 </div>
                 <div className="svc-field">
                   <label>Scripture Reading</label>
                   <input value={form.scripture_reading}
-                    onChange={e => setForm({...form, scripture_reading: e.target.value})}
+                    onChange={e => setForm({ ...form, scripture_reading: e.target.value })}
                     placeholder="e.g. John 3:16" />
                 </div>
               </div>
-              <div className="svc-field svc-field-full">
+              <div className="svc-field">
                 <label>Sermon Topic</label>
                 <input value={form.sermon_topic}
-                  onChange={e => setForm({...form, sermon_topic: e.target.value})}
+                  onChange={e => setForm({ ...form, sermon_topic: e.target.value })}
                   placeholder="Title of the sermon" />
-              </div>
-
-              <div className="svc-form-section">Offerings (KES)</div>
-              <div className="svc-row svc-row-3">
-                {[["tithes","Tithes"],["offering","General Offering"],["building_offering","Building"],
-                  ["thanksgiving","Thanksgiving"],["seed_offering","Seed"],
-                  ["welfare_offering","Welfare"],["other_offering","Other"]].map(([k,l]) => (
-                  <div className="svc-field" key={k}>
-                    <label>{l}</label>
-                    <input type="number" min="0" step="0.01" value={form[k]}
-                      onChange={e => setForm({...form, [k]: e.target.value})} placeholder="0" />
-                  </div>
-                ))}
               </div>
 
               <div className="svc-form-actions">
                 <button type="button" className="svc-btn-ghost"
                   onClick={() => setShowForm(false)}>Cancel</button>
                 <button type="submit" className="svc-btn-primary" disabled={saving}>
-                  {saving ? "Saving…" : editing ? "Update Service" : "Create Service"}
+                  {saving ? "Saving..." : editing ? "Update Service" : "Create Service"}
                 </button>
               </div>
             </form>
