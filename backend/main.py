@@ -1,6 +1,6 @@
 """
 AFC Uthiru Church Management System — FastAPI Sync Engine
-v1.3 — Fixed login + full audit trail + email + forgot/reset password.
+v1.4 — Fixed header row (row 6), correct sheet names, full feature set.
 """
 
 import os
@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
-app = FastAPI(title="AFC Uthiru CMS API", version="1.3.0")
+app = FastAPI(title="AFC Uthiru CMS API", version="1.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,6 +37,20 @@ TOKEN_EXPIRY_MIN = 480
 RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "re_T48XHsER_78VVzPcxUNCiJEQRV52fDUTK")
 RESEND_FROM      = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 FRONTEND_URL     = os.environ.get("FRONTEND_URL", "https://afc-cms.vercel.app")
+
+# ── Sheet name constants (single source of truth) ────────────────
+SH_USERS       = "Users_db"
+SH_MEMBERS     = "MemberDetails_db"      # ← correct sheet name
+SH_DEPARTMENTS = "Departments_db"
+SH_MEMBER_DEPT = "MemberDepartments_db"
+SH_SERVICES    = "ServiceRegister_db"
+SH_EVENTS      = "EventsRegister_db"
+SH_ATTENDANCE  = "Attendance_db"
+SH_AUDIT       = "AuditLog_db"
+SH_RESET       = "ResetTokens_db"
+
+# All sheets have headers on row 6, data from row 7
+HEADER_ROW = 6
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -56,7 +70,8 @@ def _service():
     return build("sheets", "v4", credentials=creds)
 
 
-def sheet_to_list(sheet_name: str, header_row: int = 1) -> list[dict]:
+def sheet_to_list(sheet_name: str, header_row: int = HEADER_ROW) -> list[dict]:
+    """Read sheet into list of dicts. Headers are on header_row (default 6)."""
     try:
         result = _service().spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
@@ -85,21 +100,21 @@ def sheet_to_list(sheet_name: str, header_row: int = 1) -> list[dict]:
 def append_row(sheet_name: str, values: list):
     _service().spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A1",
+        range=f"{sheet_name}!A{HEADER_ROW}",
         valueInputOption="USER_ENTERED",
         insertDataOption="INSERT_ROWS",
         body={"values": [values]}
     ).execute()
 
 
-def find_row_by_sn(sheet_name: str, sn: str, header_row: int = 1) -> int | None:
+def find_row_by_sn(sheet_name: str, sn: str) -> int | None:
     result = _service().spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!A{header_row}:A"
+        range=f"{sheet_name}!A{HEADER_ROW}:A"
     ).execute()
     for idx, row in enumerate(result.get("values", [])):
         if row and str(row[0]).strip() == str(sn).strip():
-            return header_row + idx
+            return HEADER_ROW + idx
     return None
 
 
@@ -115,6 +130,15 @@ def update_row(sheet_name: str, row_number: int, values: list):
         range=f"{sheet_name}!A{row_number}:{col}{row_number}",
         valueInputOption="USER_ENTERED",
         body={"values": [values]}
+    ).execute()
+
+
+def update_cell(sheet_name: str, row_number: int, col_letter: str, value):
+    _service().spreadsheets().values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=f"{sheet_name}!{col_letter}{row_number}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[value]]}
     ).execute()
 
 
@@ -146,25 +170,19 @@ def now_str() -> str:
 def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
     s = str(sex or "").strip().upper()
     m = str(marital_status or "").strip().upper()
-
     if m in ("MARRIED", "WIDOWED", "DIVORCED", "SEPARATED", "SINGLE PARENT", "WIDOW/WIDOWER"):
         return "BROTHERS UNION" if s == "MALE" else "SISTERS UNION"
-
-    if dob_raw and str(dob_raw).strip() not in ("", "—"):
+    if dob_raw and str(dob_raw).strip() not in ("", "-"):
         try:
             dob   = datetime.strptime(str(dob_raw).strip(), "%Y-%m-%d").date()
             today = date.today()
             age   = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-            if age <= 12:
-                return "SUNDAY SCHOOL"
-            if age <= 17:
-                return "PRE-YOUTH DEPARTMENT"
-            if age <= 35:
-                return "YOUTH DEPARTMENT"
+            if age <= 12:  return "SUNDAY SCHOOL"
+            if age <= 17:  return "PRE-YOUTH DEPARTMENT"
+            if age <= 35:  return "YOUTH DEPARTMENT"
             return "BROTHERS UNION" if s == "MALE" else "SISTERS UNION"
         except Exception:
             pass
-
     return "YOUTH DEPARTMENT"
 
 
@@ -175,26 +193,35 @@ def derive_department_1(sex: str, marital_status: str, dob_raw: str) -> str:
 def _hash(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt(12)).decode()
 
-
 def _verify(plain: str, hashed: str) -> bool:
     try:
         return bcrypt.checkpw(plain.encode(), hashed.encode())
     except Exception:
         return False
 
-
 def _make_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload = data.copy()
     payload["exp"] = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=TOKEN_EXPIRY_MIN))
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
-
 def _get_user(username: str) -> dict | None:
-    users = sheet_to_list("Users_db")
+    users = sheet_to_list(SH_USERS)
     return next(
         (u for u in users if u.get("USERNAME", "").strip().lower() == username.strip().lower()),
         None
     )
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT TRAIL  (defined early — used everywhere)
+# ═══════════════════════════════════════════════════════════════
+
+def _audit(username: str, action: str, module: str, item_id: str, description: str):
+    try:
+        sn = next_sn(SH_AUDIT)
+        append_row(SH_AUDIT, [sn, now_str(), username, action, module, item_id, description])
+    except Exception as e:
+        print(f"Audit log error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -228,7 +255,6 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> CurrentUser:
         church_branch=user.get("CHURCH_BRANCH", "AFC UTHIRU")
     )
 
-
 def require_admin(u: CurrentUser = Depends(get_current_user)) -> CurrentUser:
     if not u.is_admin:
         raise HTTPException(403, "Admin access required.")
@@ -247,15 +273,12 @@ class UserCreate(BaseModel):
     is_admin: bool = False
     church_branch: str = "AFC UTHIRU"
 
-
 class ForgotPasswordRequest(BaseModel):
     email: str
-
 
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
-
 
 class MemberModel(BaseModel):
     membership_number: Optional[str] = ""
@@ -281,9 +304,39 @@ class MemberModel(BaseModel):
     photo_url: Optional[str] = ""
     departments: list[str] = []
 
-
 class OverrideDeptRequest(BaseModel):
     department: str
+
+class ServiceIn(BaseModel):
+    date: str
+    nature_of_service: Optional[str] = None
+    opening_time: Optional[str] = None
+    closing_time: Optional[str] = None
+    preacher: Optional[str] = None
+    scripture_reading: Optional[str] = None
+    sermon_topic: Optional[str] = None
+    church_branch: Optional[str] = "AFC UTHIRU"
+
+class EventIn(BaseModel):
+    event_title: str
+    event_description: Optional[str] = None
+    event_date: str
+    event_time: Optional[str] = None
+    event_location: Optional[str] = None
+    targeted_group: Optional[str] = None
+    pastor_in_charge: Optional[str] = None
+    phone: Optional[str] = None
+    church_branch: Optional[str] = "AFC UTHIRU"
+
+class AttendanceMarkRequest(BaseModel):
+    session_type: str
+    session_id: str
+    member_sns: list[str]
+
+class AttendanceUnmarkRequest(BaseModel):
+    session_type: str
+    session_id: str
+    member_sn: str
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -303,46 +356,91 @@ def send_email(to: str, subject: str, html: str) -> bool:
         print(f"Email error: {e}")
         return False
 
-
 def email_welcome(to: str, full_name: str, username: str, password: str):
     send_email(to, "Your AFC Uthiru CMS Account", f"""
     <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;background:#fff;border-radius:12px;border:1px solid #e2e8f0">
       <div style="background:#00B4D8;color:#04212F;width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;margin-bottom:20px;padding:0 8px">AFC</div>
       <h2 style="color:#0F2A47;margin:0 0 8px">Welcome, {full_name}</h2>
-      <p style="color:#64748B;margin:0 0 24px">Your account on the AFC Uthiru CMS has been created. Your login details:</p>
+      <p style="color:#64748B;margin:0 0 24px">Your account on the AFC Uthiru CMS has been created.</p>
       <div style="background:#F0F4F8;border-radius:8px;padding:16px 20px;margin-bottom:24px">
         <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;text-transform:uppercase">Username</p>
         <p style="margin:0 0 16px;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{username}</p>
         <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;text-transform:uppercase">Temporary password</p>
         <p style="margin:0;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{password}</p>
       </div>
-      <a href="{FRONTEND_URL}/login" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px;margin-bottom:20px">Sign in now →</a>
-      <p style="color:#94A3B8;font-size:12px;margin:0">Please change your password after first login.</p>
+      <a href="{FRONTEND_URL}/login" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px">Sign in now</a>
     </div>""")
-
 
 def email_reset(to: str, full_name: str, token: str):
     reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
-    send_email(to, "AFC Uthiru CMS — Password Reset", f"""
+    send_email(to, "AFC Uthiru CMS - Password Reset", f"""
     <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;background:#fff;border-radius:12px;border:1px solid #e2e8f0">
-      <div style="background:#00B4D8;color:#04212F;width:44px;height:44px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;margin-bottom:20px;padding:0 8px">AFC</div>
       <h2 style="color:#0F2A47;margin:0 0 8px">Password reset request</h2>
-      <p style="color:#64748B;margin:0 0 24px">Hi {full_name}, click below to reset your password. Expires in <strong>1 hour</strong>.</p>
-      <a href="{reset_url}" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px;margin-bottom:20px">Reset my password →</a>
-      <p style="color:#94A3B8;font-size:12px;margin:0">If you didn't request this, ignore this email.</p>
+      <p style="color:#64748B;margin:0 0 24px">Hi {full_name}, click below to reset your password. Expires in 1 hour.</p>
+      <a href="{reset_url}" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px">Reset my password</a>
     </div>""")
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUDIT TRAIL
+# SESSION HELPERS
 # ═══════════════════════════════════════════════════════════════
 
-def _audit(username: str, action: str, module: str, item_id: str, description: str):
+def _session_status(date_str: str) -> str:
     try:
-        sn = next_sn("AuditLog_db")
-        append_row("AuditLog_db", [sn, now_str(), username, action, module, item_id, description])
-    except Exception as e:
-        print(f"Audit log error: {e}")
+        return "UPCOMING" if datetime.strptime(date_str.strip(), "%Y-%m-%d").date() > date.today() else "PAST"
+    except Exception:
+        return "PAST"
+
+def _next_session_id(prefix: str, sheet_name: str, date_str: str) -> str:
+    code = date_str.replace("-", "")
+    pfx  = f"{prefix}-{code}-"
+    recs = sheet_to_list(sheet_name)
+    seq  = max(
+        (int(r.get("S_N", "0").split("-")[-1]) for r in recs if str(r.get("S_N", "")).startswith(pfx)),
+        default=0
+    )
+    return f"{pfx}{seq + 1:03d}"
+
+def _derive_gender_category(sex: str, dob_raw: str) -> str:
+    sex = str(sex or "").strip().upper()
+    if dob_raw and str(dob_raw).strip():
+        try:
+            dob   = datetime.strptime(dob_raw.strip(), "%Y-%m-%d").date()
+            today = date.today()
+            age   = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+            if age < 13:  return "CHILD"
+            if age <= 17: return "YOUTH"
+        except Exception:
+            pass
+    return "WOMAN" if sex == "FEMALE" else "MAN"
+
+def _recalc_counts(session_id: str) -> dict:
+    counts = {"MEN": 0, "WOMEN": 0, "YOUTH": 0, "CHILDREN": 0}
+    for a in sheet_to_list(SH_ATTENDANCE):
+        if str(a.get("SESSION_ID", "")).strip() != session_id:
+            continue
+        if str(a.get("MARKED_PRESENT", "")).strip().upper() != "TRUE":
+            continue
+        cat = str(a.get("GENDER_CATEGORY", "")).strip().upper()
+        if cat == "MAN":     counts["MEN"]      += 1
+        elif cat == "WOMAN": counts["WOMEN"]    += 1
+        elif cat == "YOUTH": counts["YOUTH"]    += 1
+        elif cat == "CHILD": counts["CHILDREN"] += 1
+    counts["TOTAL"] = sum(counts.values())
+    return counts
+
+def _push_counts(session_type: str, session_id: str, counts: dict):
+    sheet = SH_SERVICES if session_type.upper() == "SERVICE" else SH_EVENTS
+    records = sheet_to_list(sheet)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == session_id), None)
+    if row_idx is None:
+        return
+    sheet_row = HEADER_ROW + 1 + row_idx
+    update_cell(sheet, sheet_row, "I", counts["MEN"])
+    update_cell(sheet, sheet_row, "J", counts["WOMEN"])
+    update_cell(sheet, sheet_row, "K", counts["YOUTH"])
+    update_cell(sheet, sheet_row, "L", counts["CHILDREN"])
+    update_cell(sheet, sheet_row, "M", counts["TOTAL"])
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -351,8 +449,7 @@ def _audit(username: str, action: str, module: str, item_id: str, description: s
 
 @app.get("/", tags=["Health"])
 def root():
-    return {"status": "online", "system": "AFC Uthiru CMS API v1.3"}
-
+    return {"status": "online", "system": "AFC Uthiru CMS API v1.4"}
 
 @app.get("/api/test-connection", tags=["Health"])
 def test_connection():
@@ -368,7 +465,7 @@ def test_connection():
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUTH ENDPOINTS
+# AUTH
 # ═══════════════════════════════════════════════════════════════
 
 @app.post("/api/auth/login", tags=["Auth"])
@@ -390,59 +487,56 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
         "username": user["USERNAME"]
     }
 
-
 @app.get("/api/auth/me", tags=["Auth"])
 def me(u: CurrentUser = Depends(get_current_user)):
     return {"username": u.username, "full_name": u.full_name, "email": u.email,
             "is_admin": u.is_admin, "church_branch": u.church_branch}
 
-
 @app.post("/api/auth/forgot-password", tags=["Auth"])
 def forgot_password(req: ForgotPasswordRequest):
-    users = sheet_to_list("Users_db")
-    user  = next((u for u in users if u.get("EMAIL", "").strip().lower() == req.email.strip().lower()), None)
+    users = sheet_to_list(SH_USERS)
+    user  = next((u for u in users if u.get("EMAIL","").strip().lower() == req.email.strip().lower()), None)
     if user:
-        token = secrets.token_urlsafe(32)
+        token      = secrets.token_urlsafe(32)
         expires_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-        sn = next_sn("ResetTokens_db")
+        sn         = next_sn(SH_RESET)
         try:
-            append_row("ResetTokens_db", [sn, req.email, token, expires_at, "FALSE"])
+            append_row(SH_RESET, [sn, req.email, token, expires_at, "FALSE"])
         except Exception as e:
             print(f"ResetTokens_db write error: {e}")
-        email_reset(req.email, user.get("FULL_NAME", ""), token)
-        _audit(user["USERNAME"], "FORGOT_PASSWORD", "AUTH", user.get("S_N", ""), "Reset token issued")
+        email_reset(req.email, user.get("FULL_NAME",""), token)
+        _audit(user["USERNAME"], "FORGOT_PASSWORD", "AUTH", user.get("S_N",""), "Reset token issued")
     return {"detail": "If that email exists, a reset link has been sent."}
-
 
 @app.post("/api/auth/reset-password", tags=["Auth"])
 def reset_password(req: ResetPasswordRequest):
     if len(req.new_password) < 6:
         raise HTTPException(400, "Password must be at least 6 characters.")
-    tokens    = sheet_to_list("ResetTokens_db")
-    token_row = next((t for t in tokens if t.get("TOKEN", "") == req.token), None)
+    tokens    = sheet_to_list(SH_RESET)
+    token_row = next((t for t in tokens if t.get("TOKEN","") == req.token), None)
     if not token_row:
         raise HTTPException(400, "Invalid or expired reset token.")
-    if token_row.get("USED", "").upper() == "TRUE":
+    if token_row.get("USED","").upper() == "TRUE":
         raise HTTPException(400, "This reset link has already been used.")
     try:
-        exp = datetime.strptime(token_row.get("EXPIRES_AT", ""), "%Y-%m-%d %H:%M:%S")
+        exp = datetime.strptime(token_row.get("EXPIRES_AT",""), "%Y-%m-%d %H:%M:%S")
         if datetime.now() > exp:
-            raise HTTPException(400, "Reset link has expired. Please request a new one.")
+            raise HTTPException(400, "Reset link has expired.")
     except ValueError:
         raise HTTPException(400, "Invalid token expiry.")
-    users = sheet_to_list("Users_db")
-    user  = next((u for u in users if u.get("EMAIL", "").lower() == token_row.get("EMAIL", "").lower()), None)
+    users = sheet_to_list(SH_USERS)
+    user  = next((u for u in users if u.get("EMAIL","").lower() == token_row.get("EMAIL","").lower()), None)
     if not user:
         raise HTTPException(404, "User not found.")
-    rn = find_row_by_sn("Users_db", user["S_N"])
-    update_row("Users_db", rn, [
-        user["S_N"], user["USERNAME"], user.get("FULL_NAME", ""), user.get("EMAIL", ""),
-        _hash(req.new_password), user.get("IS_ADMIN", "FALSE"), user.get("IS_ACTIVE", "TRUE"),
-        user.get("CHURCH_BRANCH", "AFC UTHIRU")
+    rn = find_row_by_sn(SH_USERS, user["S_N"])
+    update_row(SH_USERS, rn, [
+        user["S_N"], user["USERNAME"], user.get("FULL_NAME",""), user.get("EMAIL",""),
+        _hash(req.new_password), user.get("IS_ADMIN","FALSE"), user.get("IS_ACTIVE","TRUE"),
+        user.get("CHURCH_BRANCH","AFC UTHIRU")
     ])
-    token_rn = find_row_by_sn("ResetTokens_db", token_row["S_N"])
+    token_rn = find_row_by_sn(SH_RESET, token_row["S_N"])
     if token_rn:
-        update_row("ResetTokens_db", token_rn,
+        update_row(SH_RESET, token_rn,
                    [token_row["S_N"], token_row["EMAIL"], req.token, token_row["EXPIRES_AT"], "TRUE"])
     _audit(user["USERNAME"], "RESET_PASSWORD", "AUTH", user["S_N"], "Password reset via token")
     return {"detail": "Password reset successfully. You can now log in."}
@@ -454,22 +548,21 @@ def reset_password(req: ResetPasswordRequest):
 
 @app.get("/api/users", tags=["Users"])
 def get_users(_: CurrentUser = Depends(require_admin)):
-    users = sheet_to_list("Users_db")
+    users = sheet_to_list(SH_USERS)
     for u in users:
         u.pop("HASHED_PASSWORD", None)
         u.pop("PASSWORD", None)
     return users
 
-
 @app.post("/api/users", tags=["Users"])
 def create_user(body: UserCreate, admin: CurrentUser = Depends(require_admin)):
-    users = sheet_to_list("Users_db")
-    if any(u.get("USERNAME", "").lower() == body.username.lower() for u in users):
+    users = sheet_to_list(SH_USERS)
+    if any(u.get("USERNAME","").lower() == body.username.lower() for u in users):
         raise HTTPException(409, f"Username '{body.username}' already exists.")
-    if any(u.get("EMAIL", "").lower() == body.email.lower() for u in users):
+    if any(u.get("EMAIL","").lower() == body.email.lower() for u in users):
         raise HTTPException(409, f"Email '{body.email}' already in use.")
-    sn = next_sn("Users_db")
-    append_row("Users_db", [
+    sn = next_sn(SH_USERS)
+    append_row(SH_USERS, [
         sn, body.username.strip(), body.full_name.strip(), body.email.strip(),
         _hash(body.password), "TRUE" if body.is_admin else "FALSE",
         "TRUE", body.church_branch.upper(), now_str()
@@ -479,21 +572,20 @@ def create_user(body: UserCreate, admin: CurrentUser = Depends(require_admin)):
            f"Created account '{body.username}' ({'Admin' if body.is_admin else 'Staff'})")
     return {"detail": f"User '{body.username}' created. Login details sent to {body.email}."}
 
-
 @app.post("/api/users/deactivate/{username}", tags=["Users"])
 def deactivate_user(username: str, admin: CurrentUser = Depends(require_admin)):
     if admin.username.lower() == username.lower():
         raise HTTPException(400, "Cannot deactivate your own account.")
-    users = sheet_to_list("Users_db")
-    user  = next((u for u in users if u.get("USERNAME", "").lower() == username.lower()), None)
+    users = sheet_to_list(SH_USERS)
+    user  = next((u for u in users if u.get("USERNAME","").lower() == username.lower()), None)
     if not user:
         raise HTTPException(404, f"User '{username}' not found.")
-    rn = find_row_by_sn("Users_db", user["S_N"])
-    update_row("Users_db", rn, [
-        user["S_N"], user["USERNAME"], user.get("FULL_NAME", ""), user.get("EMAIL", ""),
-        user.get("HASHED_PASSWORD", user.get("PASSWORD", "")),
-        user.get("IS_ADMIN", "FALSE"), "FALSE",
-        user.get("CHURCH_BRANCH", "AFC UTHIRU"), now_str()
+    rn = find_row_by_sn(SH_USERS, user["S_N"])
+    update_row(SH_USERS, rn, [
+        user["S_N"], user["USERNAME"], user.get("FULL_NAME",""), user.get("EMAIL",""),
+        user.get("HASHED_PASSWORD", user.get("PASSWORD","")),
+        user.get("IS_ADMIN","FALSE"), "FALSE",
+        user.get("CHURCH_BRANCH","AFC UTHIRU"), now_str()
     ])
     _audit(admin.username, "DEACTIVATE_USER", "USERS", user["S_N"], f"Deactivated '{username}'")
     return {"detail": f"User '{username}' deactivated."}
@@ -505,32 +597,30 @@ def deactivate_user(username: str, admin: CurrentUser = Depends(require_admin)):
 
 @app.get("/api/members", tags=["Members"])
 def get_members(_: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Members_db")
+    records = sheet_to_list(SH_MEMBERS)
     for r in records:
         raw = r.get("DEPARTMENTS", "")
         r["DEPARTMENTS"] = [d.strip() for d in raw.split(",") if d.strip()] if raw else []
     return records
 
-
 @app.get("/api/members/{sn}", tags=["Members"])
 def get_member(sn: str, _: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Members_db")
-    m = next((r for r in records if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_MEMBERS)
+    m = next((r for r in records if str(r.get("S_N","")).strip() == sn), None)
     if not m:
         raise HTTPException(404, f"Member '{sn}' not found.")
-    raw = m.get("DEPARTMENTS", "")
+    raw = m.get("DEPARTMENTS","")
     m["DEPARTMENTS"] = [d.strip() for d in raw.split(",") if d.strip()] if raw else []
     return m
 
-
 @app.post("/api/members", tags=["Members"])
 def add_member(m: MemberModel, u: CurrentUser = Depends(get_current_user)):
-    sn        = next_sn("Members_db")
+    sn        = next_sn(SH_MEMBERS)
     dept1     = derive_department_1(m.sex, m.marital_status, m.date_of_birth)
     all_depts = m.departments.copy()
     if dept1 not in all_depts:
         all_depts.insert(0, dept1)
-    append_row("Members_db", [
+    append_row(SH_MEMBERS, [
         sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
         m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence,
         m.landmark, m.occupation, m.membership_status.upper(), m.spouse_name,
@@ -542,20 +632,18 @@ def add_member(m: MemberModel, u: CurrentUser = Depends(get_current_user)):
     _audit(u.username, "ADD_MEMBER", "MEMBERS", str(sn), f"Registered '{m.full_name}' — dept: {dept1}")
     return {"detail": "Member registered.", "sn": sn, "department_1": dept1}
 
-
 @app.put("/api/members/{sn}", tags=["Members"])
 def update_member(sn: str, m: MemberModel, u: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Members_db")
-    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_MEMBERS)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Member '{sn}' not found.")
     dept1     = derive_department_1(m.sex, m.marital_status, m.date_of_birth)
     all_depts = m.departments.copy()
     if dept1 not in all_depts:
         all_depts.insert(0, dept1)
-    # row_idx is 0-based in records list; sheet row = row_idx + 2 (header on row 1, data from row 2)
-    sheet_row = row_idx + 2
-    update_row("Members_db", sheet_row, [
+    sheet_row = HEADER_ROW + 1 + row_idx
+    update_row(SH_MEMBERS, sheet_row, [
         sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
         m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence,
         m.landmark, m.occupation, m.membership_status.upper(), m.spouse_name,
@@ -567,56 +655,55 @@ def update_member(sn: str, m: MemberModel, u: CurrentUser = Depends(get_current_
     _audit(u.username, "UPDATE_MEMBER", "MEMBERS", sn, f"Updated '{m.full_name}'")
     return {"detail": "Member updated.", "department_1": dept1}
 
-
 @app.delete("/api/members/{sn}", tags=["Members"])
 def delete_member(sn: str, u: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Members_db")
-    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_MEMBERS)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Member '{sn}' not found.")
-    name      = records[row_idx].get("FULL_NAME", "Unknown")
-    sheet_row = row_idx + 2
-    clear_row("Members_db", sheet_row)
+    name      = records[row_idx].get("MEMBER_NAME", records[row_idx].get("FULL_NAME","Unknown"))
+    sheet_row = HEADER_ROW + 1 + row_idx
+    clear_row(SH_MEMBERS, sheet_row)
     _audit(u.username, "DELETE_MEMBER", "MEMBERS", sn, f"Deleted '{name}'")
     return {"detail": f"Member '{name}' deleted."}
 
-
 @app.post("/api/members/{sn}/override-department", tags=["Members"])
 def override_department(sn: str, req: OverrideDeptRequest, u: CurrentUser = Depends(require_admin)):
-    records = sheet_to_list("Members_db")
-    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_MEMBERS)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Member '{sn}' not found.")
-    m         = records[row_idx]
-    raw       = m.get("DEPARTMENTS", "")
-    depts     = [d.strip() for d in raw.split(",") if d.strip()] if raw else []
-    new_dept  = req.department.strip()
+    m        = records[row_idx]
+    raw      = m.get("DEPARTMENTS","")
+    depts    = [d.strip() for d in raw.split(",") if d.strip()] if raw else []
+    new_dept = req.department.strip()
     if new_dept in depts:
         depts.remove(new_dept)
     depts.insert(0, new_dept)
-    sheet_row = row_idx + 2
-    update_row("Members_db", sheet_row, [
-        m.get("S_N", sn), m.get("MEMBERSHIP_NUMBER", ""), m.get("FULL_NAME", ""),
-        m.get("PHONE_NUMBER", ""), m.get("EMAIL", ""), m.get("SEX", ""),
-        m.get("MARITAL_STATUS", ""), m.get("DATE_OF_BIRTH", ""), m.get("RESIDENCE", ""),
-        m.get("LANDMARK", ""), m.get("OCCUPATION", ""), m.get("MEMBERSHIP_STATUS", ""),
-        m.get("SPOUSE_NAME", ""), m.get("NO_OF_CHILDREN", ""), m.get("CONVERSION_DATE", ""),
-        m.get("BAPTISM_DATE", ""), m.get("HOLY_SPIRIT_RECEIVED", ""), m.get("HOLY_SPIRIT_DATE", ""),
-        m.get("NOK_NAME", ""), m.get("NOK_RELATIONSHIP", ""), m.get("NOK_PHONE", ""),
-        m.get("PHOTO_URL", ""), new_dept, ",".join(depts), now_str()
+    sheet_row = HEADER_ROW + 1 + row_idx
+    name_key  = "MEMBER_NAME" if "MEMBER_NAME" in m else "FULL_NAME"
+    update_row(SH_MEMBERS, sheet_row, [
+        m.get("S_N",sn), m.get("MEMBERSHIP_NUMBER",""), m.get(name_key,""),
+        m.get("PHONE",""), m.get("EMAIL",""), m.get("SEX",""),
+        m.get("MARITAL_STATUS",""), m.get("DATE_OF_BIRTH",""), m.get("RESIDENCE",""),
+        m.get("LANDMARK",""), m.get("OCCUPATION",""), m.get("MEMBERSHIP_STATUS",""),
+        m.get("SPOUSE_NAME",""), m.get("NO_OF_CHILDREN",""), m.get("CONVERSION_DATE",""),
+        m.get("BAPTISM_DATE",""), m.get("HOLY_SPIRIT_RECEIVED",""), m.get("HOLY_SPIRIT_DATE",""),
+        m.get("NOK_NAME",""), m.get("NOK_RELATIONSHIP",""), m.get("NOK_PHONE",""),
+        m.get("PHOTO_URL",""), new_dept, ",".join(depts), now_str()
     ])
     _audit(u.username, "OVERRIDE_DEPARTMENT", "MEMBERS", sn,
-           f"Overrode dept to '{new_dept}' for '{m.get('FULL_NAME','')}'")
+           f"Overrode dept to '{new_dept}' for '{m.get(name_key,'')}'")
     return {"detail": f"Department overridden to '{new_dept}'."}
 
 
 # ═══════════════════════════════════════════════════════════════
-# DEPARTMENTS REFERENCE
+# DEPARTMENTS
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/departments", tags=["Departments"])
 def list_departments(_: CurrentUser = Depends(get_current_user)):
-    return sheet_to_list("Departments_db")
+    return sheet_to_list(SH_DEPARTMENTS)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -625,154 +712,23 @@ def list_departments(_: CurrentUser = Depends(get_current_user)):
 
 @app.get("/api/audit", tags=["Audit"])
 def get_audit_log(_: CurrentUser = Depends(require_admin)):
-    return list(reversed(sheet_to_list("AuditLog_db")))
-
+    return list(reversed(sheet_to_list(SH_AUDIT)))
 
 @app.get("/api/audit/search", tags=["Audit"])
 def search_audit_log(q: str = "", action: str = "", module: str = "",
                      _: CurrentUser = Depends(require_admin)):
-    records = list(reversed(sheet_to_list("AuditLog_db")))
+    records = list(reversed(sheet_to_list(SH_AUDIT)))
     if action:
-        records = [r for r in records if r.get("ACTION", "").upper() == action.upper()]
+        records = [r for r in records if r.get("ACTION","").upper() == action.upper()]
     if module:
-        records = [r for r in records if r.get("MODULE", "").upper() == module.upper()]
+        records = [r for r in records if r.get("MODULE","").upper() == module.upper()]
     if q:
         ql = q.lower()
         records = [r for r in records if
-                   ql in r.get("USERNAME", "").lower() or
-                   ql in r.get("DESCRIPTION", "").lower() or
-                   ql in r.get("ITEM_ID", "").lower()]
+                   ql in r.get("USERNAME","").lower() or
+                   ql in r.get("DESCRIPTION","").lower() or
+                   ql in r.get("ITEM_ID","").lower()]
     return records
-
-
-# ═══════════════════════════════════════════════════════════════
-# PYDANTIC MODELS — SERVICES, EVENTS, ATTENDANCE
-# ═══════════════════════════════════════════════════════════════
-
-class ServiceIn(BaseModel):
-    date: str                          # YYYY-MM-DD (past or future)
-    nature_of_service: Optional[str] = None
-    opening_time: Optional[str] = None
-    closing_time: Optional[str] = None
-    preacher: Optional[str] = None
-    scripture_reading: Optional[str] = None
-    sermon_topic: Optional[str] = None
-    tithes: Optional[float] = 0
-    offering: Optional[float] = 0
-    building_offering: Optional[float] = 0
-    thanksgiving: Optional[float] = 0
-    seed_offering: Optional[float] = 0
-    welfare_offering: Optional[float] = 0
-    other_offering: Optional[float] = 0
-    church_branch: Optional[str] = "AFC UTHIRU"
-
-
-class EventIn(BaseModel):
-    event_title: str
-    event_description: Optional[str] = None
-    event_date: str                    # YYYY-MM-DD (past or future)
-    event_time: Optional[str] = None
-    event_location: Optional[str] = None
-    targeted_group: Optional[str] = None
-    pastor_in_charge: Optional[str] = None
-    phone: Optional[str] = None
-    church_branch: Optional[str] = "AFC UTHIRU"
-
-
-class AttendanceMarkRequest(BaseModel):
-    session_type: str                  # "SERVICE" or "EVENT"
-    session_id: str                    # SVC-YYYYMMDD-001 or EVT-YYYYMMDD-001
-    member_sns: list[str]              # list of member S_N values
-
-
-class AttendanceUnmarkRequest(BaseModel):
-    session_type: str
-    session_id: str
-    member_sn: str
-
-
-# ═══════════════════════════════════════════════════════════════
-# SESSION HELPERS
-# ═══════════════════════════════════════════════════════════════
-
-def _session_status(date_str: str) -> str:
-    """UPCOMING if date is in the future, PAST if today or earlier."""
-    try:
-        session_date = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
-        return "UPCOMING" if session_date > date.today() else "PAST"
-    except Exception:
-        return "PAST"
-
-
-def _next_session_id(prefix: str, sheet_name: str, date_str: str) -> str:
-    """Generate SVC-YYYYMMDD-001 or EVT-YYYYMMDD-001."""
-    code = date_str.replace("-", "")
-    pfx  = f"{prefix}-{code}-"
-    recs = sheet_to_list(sheet_name)
-    seq  = max(
-        (int(r.get("S_N", "0").split("-")[-1])
-         for r in recs if str(r.get("S_N", "")).startswith(pfx)),
-        default=0
-    )
-    return f"{pfx}{seq + 1:03d}"
-
-
-def _derive_gender_category(sex: str, dob_raw: str) -> str:
-    sex = str(sex or "").strip().upper()
-    if dob_raw and str(dob_raw).strip():
-        try:
-            dob   = datetime.strptime(dob_raw.strip(), "%Y-%m-%d").date()
-            today = date.today()
-            age   = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-            if age < 13:
-                return "CHILD"
-            if age <= 17:
-                return "YOUTH"
-        except Exception:
-            pass
-    return "WOMAN" if sex == "FEMALE" else "MAN"
-
-
-def _recalc_counts(session_id: str) -> dict:
-    counts = {"MEN": 0, "WOMEN": 0, "YOUTH": 0, "CHILDREN": 0}
-    for a in sheet_to_list("Attendance_db"):
-        if str(a.get("SESSION_ID", "")).strip() != session_id:
-            continue
-        if str(a.get("MARKED_PRESENT", "")).strip().upper() != "TRUE":
-            continue
-        cat = str(a.get("GENDER_CATEGORY", "")).strip().upper()
-        if cat == "MAN":     counts["MEN"]      += 1
-        elif cat == "WOMAN": counts["WOMEN"]    += 1
-        elif cat == "YOUTH": counts["YOUTH"]    += 1
-        elif cat == "CHILD": counts["CHILDREN"] += 1
-    counts["TOTAL"] = sum(counts.values())
-    return counts
-
-
-def _push_counts(session_type: str, session_id: str, counts: dict):
-    """Write attendance counts back to parent ServiceRegister_db or EventsRegister_db."""
-    sheet = "ServiceRegister_db" if session_type.upper() == "SERVICE" else "EventsRegister_db"
-    records = sheet_to_list(sheet)
-    row_idx = next((i for i, r in enumerate(records)
-                    if str(r.get("S_N", "")).strip() == session_id), None)
-    if row_idx is None:
-        return
-    sheet_row = row_idx + 2   # header on row 1, data from row 2
-    # Attendance columns are I-M (indices 8-12, 0-based) — update individually
-    update_cell(sheet, sheet_row, "I", counts["MEN"])
-    update_cell(sheet, sheet_row, "J", counts["WOMEN"])
-    update_cell(sheet, sheet_row, "K", counts["YOUTH"])
-    update_cell(sheet, sheet_row, "L", counts["CHILDREN"])
-    update_cell(sheet, sheet_row, "M", counts["TOTAL"])
-
-
-def update_cell(sheet_name: str, row_number: int, col_letter: str, value):
-    _service().spreadsheets().values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"{sheet_name}!{col_letter}{row_number}",
-        valueInputOption="USER_ENTERED",
-        body={"values": [[value]]}
-    ).execute()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -781,86 +737,68 @@ def update_cell(sheet_name: str, row_number: int, col_letter: str, value):
 
 @app.get("/api/services", tags=["Services"])
 def list_services(_: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("ServiceRegister_db")
+    records = sheet_to_list(SH_SERVICES)
     for r in records:
-        r["STATUS"] = _session_status(r.get("DATE", ""))
+        r["STATUS"] = _session_status(r.get("DATE",""))
     return records
-
 
 @app.get("/api/services/{sn}", tags=["Services"])
 def get_service(sn: str, _: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("ServiceRegister_db")
-    s = next((r for r in records if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_SERVICES)
+    s = next((r for r in records if str(r.get("S_N","")).strip() == sn), None)
     if not s:
         raise HTTPException(404, f"Service '{sn}' not found.")
-    s["STATUS"] = _session_status(s.get("DATE", ""))
+    s["STATUS"] = _session_status(s.get("DATE",""))
     return s
-
 
 @app.post("/api/services", tags=["Services"])
 def create_service(body: ServiceIn, u: CurrentUser = Depends(get_current_user)):
-    sn     = _next_session_id("SVC", "ServiceRegister_db", body.date)
+    sn     = _next_session_id("SVC", SH_SERVICES, body.date)
     status = _session_status(body.date)
-    total  = sum([body.tithes or 0, body.offering or 0, body.building_offering or 0,
-                  body.thanksgiving or 0, body.seed_offering or 0,
-                  body.welfare_offering or 0, body.other_offering or 0])
-    append_row("ServiceRegister_db", [
+    append_row(SH_SERVICES, [
         sn, body.date, body.opening_time, body.closing_time,
-        body.nature_of_service, body.preacher, body.scripture_reading,
-        body.sermon_topic,
-        0, 0, 0, 0, 0,   # MEN, WOMEN, YOUTH, CHILDREN, TOTAL — filled after attendance
-        body.tithes or 0, body.offering or 0, body.building_offering or 0,
-        body.thanksgiving or 0, body.seed_offering or 0,
-        body.welfare_offering or 0, body.other_offering or 0, total,
+        body.nature_of_service, body.preacher, body.scripture_reading, body.sermon_topic,
+        0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
         status, u.username, body.church_branch
     ])
     _audit(u.username, "CREATE_SERVICE", "SERVICES", sn,
-           f"Created {status} service on {body.date} — {body.nature_of_service}")
+           f"Created {status} service on {body.date}")
     return {
         "status": "success", "service_id": sn, "session_status": status,
-        "attendance_url": f"/api/attendance/roster/SERVICE/{sn}" if status == "PAST" else None,
         "message": f"Service '{sn}' created." +
                    (" Attendance can now be marked." if status == "PAST"
-                    else " Attendance will be available after the service date.")
+                    else " Attendance available after the service date.")
     }
-
 
 @app.put("/api/services/{sn}", tags=["Services"])
 def update_service(sn: str, body: ServiceIn, u: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("ServiceRegister_db")
-    row_idx = next((i for i, r in enumerate(records)
-                    if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_SERVICES)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Service '{sn}' not found.")
     existing  = records[row_idx]
-    sheet_row = row_idx + 2
+    sheet_row = HEADER_ROW + 1 + row_idx
     status    = _session_status(body.date)
-    total     = sum([body.tithes or 0, body.offering or 0, body.building_offering or 0,
-                     body.thanksgiving or 0, body.seed_offering or 0,
-                     body.welfare_offering or 0, body.other_offering or 0])
-    update_row("ServiceRegister_db", sheet_row, [
+    update_row(SH_SERVICES, sheet_row, [
         sn, body.date, body.opening_time, body.closing_time,
         body.nature_of_service, body.preacher, body.scripture_reading, body.sermon_topic,
-        existing.get("ATTENDANCE_MEN", 0), existing.get("ATTENDANCE_WOMEN", 0),
-        existing.get("ATTENDANCE_YOUTH", 0), existing.get("ATTENDANCE_CHILDREN", 0),
-        existing.get("TOTAL_ATTENDANCE", 0),
-        body.tithes or 0, body.offering or 0, body.building_offering or 0,
-        body.thanksgiving or 0, body.seed_offering or 0,
-        body.welfare_offering or 0, body.other_offering or 0, total,
+        existing.get("ATTENDANCE_MEN",0), existing.get("ATTENDANCE_WOMEN",0),
+        existing.get("ATTENDANCE_YOUTH",0), existing.get("ATTENDANCE_CHILDREN",0),
+        existing.get("TOTAL_ATTENDANCE",0),
+        0, 0, 0, 0, 0, 0, 0, 0,
         status, u.username, body.church_branch
     ])
     _audit(u.username, "UPDATE_SERVICE", "SERVICES", sn, f"Updated service on {body.date}")
     return {"status": "success", "message": f"Service '{sn}' updated."}
 
-
 @app.delete("/api/services/{sn}", tags=["Services"])
 def delete_service(sn: str, u: CurrentUser = Depends(require_admin)):
-    records = sheet_to_list("ServiceRegister_db")
-    row_idx = next((i for i, r in enumerate(records)
-                    if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_SERVICES)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Service '{sn}' not found.")
-    clear_row("ServiceRegister_db", row_idx + 2)
+    clear_row(SH_SERVICES, HEADER_ROW + 1 + row_idx)
     _audit(u.username, "DELETE_SERVICE", "SERVICES", sn, f"Deleted service '{sn}'")
     return {"status": "success", "message": f"Service '{sn}' deleted."}
 
@@ -871,76 +809,68 @@ def delete_service(sn: str, u: CurrentUser = Depends(require_admin)):
 
 @app.get("/api/events", tags=["Events"])
 def list_events(_: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("EventsRegister_db")
+    records = sheet_to_list(SH_EVENTS)
     for r in records:
-        r["STATUS"] = _session_status(r.get("EVENT_DATE", ""))
+        r["STATUS"] = _session_status(r.get("EVENT_DATE",""))
     return records
-
 
 @app.get("/api/events/{sn}", tags=["Events"])
 def get_event(sn: str, _: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("EventsRegister_db")
-    e = next((r for r in records if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_EVENTS)
+    e = next((r for r in records if str(r.get("S_N","")).strip() == sn), None)
     if not e:
         raise HTTPException(404, f"Event '{sn}' not found.")
-    e["STATUS"] = _session_status(e.get("EVENT_DATE", ""))
+    e["STATUS"] = _session_status(e.get("EVENT_DATE",""))
     return e
-
 
 @app.post("/api/events", tags=["Events"])
 def create_event(body: EventIn, u: CurrentUser = Depends(get_current_user)):
-    sn     = _next_session_id("EVT", "EventsRegister_db", body.event_date)
+    sn     = _next_session_id("EVT", SH_EVENTS, body.event_date)
     status = _session_status(body.event_date)
-    append_row("EventsRegister_db", [
+    append_row(SH_EVENTS, [
         sn, body.event_title, body.event_description, body.event_date,
         body.event_time, body.event_location, body.targeted_group,
         body.pastor_in_charge, body.phone, "",
-        0, 0, 0, 0, 0,   # attendance counts
+        0, 0, 0, 0, 0,
         status, u.username, body.church_branch
     ])
     _audit(u.username, "CREATE_EVENT", "EVENTS", sn,
            f"Created {status} event '{body.event_title}' on {body.event_date}")
     return {
         "status": "success", "event_id": sn, "session_status": status,
-        "attendance_url": f"/api/attendance/roster/EVENT/{sn}" if status == "PAST" else None,
         "message": f"Event '{sn}' created." +
                    (" Attendance can now be marked." if status == "PAST"
-                    else " Attendance will be available after the event date.")
+                    else " Attendance available after the event date.")
     }
-
 
 @app.put("/api/events/{sn}", tags=["Events"])
 def update_event(sn: str, body: EventIn, u: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("EventsRegister_db")
-    row_idx = next((i for i, r in enumerate(records)
-                    if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_EVENTS)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Event '{sn}' not found.")
     existing  = records[row_idx]
-    sheet_row = row_idx + 2
+    sheet_row = HEADER_ROW + 1 + row_idx
     status    = _session_status(body.event_date)
-    update_row("EventsRegister_db", sheet_row, [
+    update_row(SH_EVENTS, sheet_row, [
         sn, body.event_title, body.event_description, body.event_date,
         body.event_time, body.event_location, body.targeted_group,
-        body.pastor_in_charge, body.phone,
-        existing.get("APPROVED_BY", ""),
-        existing.get("ATTENDANCE_MEN", 0), existing.get("ATTENDANCE_WOMEN", 0),
-        existing.get("ATTENDANCE_YOUTH", 0), existing.get("ATTENDANCE_CHILDREN", 0),
-        existing.get("TOTAL_ATTENDANCE", 0),
+        body.pastor_in_charge, body.phone, existing.get("APPROVED_BY",""),
+        existing.get("ATTENDANCE_MEN",0), existing.get("ATTENDANCE_WOMEN",0),
+        existing.get("ATTENDANCE_YOUTH",0), existing.get("ATTENDANCE_CHILDREN",0),
+        existing.get("TOTAL_ATTENDANCE",0),
         status, u.username, body.church_branch
     ])
     _audit(u.username, "UPDATE_EVENT", "EVENTS", sn, f"Updated event '{body.event_title}'")
     return {"status": "success", "message": f"Event '{sn}' updated."}
 
-
 @app.delete("/api/events/{sn}", tags=["Events"])
 def delete_event(sn: str, u: CurrentUser = Depends(require_admin)):
-    records = sheet_to_list("EventsRegister_db")
-    row_idx = next((i for i, r in enumerate(records)
-                    if str(r.get("S_N", "")).strip() == sn), None)
+    records = sheet_to_list(SH_EVENTS)
+    row_idx = next((i for i, r in enumerate(records) if str(r.get("S_N","")).strip() == sn), None)
     if row_idx is None:
         raise HTTPException(404, f"Event '{sn}' not found.")
-    clear_row("EventsRegister_db", row_idx + 2)
+    clear_row(SH_EVENTS, HEADER_ROW + 1 + row_idx)
     _audit(u.username, "DELETE_EVENT", "EVENTS", sn, f"Deleted event '{sn}'")
     return {"status": "success", "message": f"Event '{sn}' deleted."}
 
@@ -950,97 +880,74 @@ def delete_event(sn: str, u: CurrentUser = Depends(require_admin)):
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/attendance/roster/{session_type}/{session_id}", tags=["Attendance"])
-def get_roster(session_type: str, session_id: str,
-               _: CurrentUser = Depends(get_current_user)):
-    """
-    Returns all members with photo, name, phone, department and is_present flag.
-    Only available for PAST sessions (status != UPCOMING).
-    """
+def get_roster(session_type: str, session_id: str, _: CurrentUser = Depends(get_current_user)):
     st = session_type.upper()
-    if st not in ("SERVICE", "EVENT"):
+    if st not in ("SERVICE","EVENT"):
         raise HTTPException(400, "session_type must be SERVICE or EVENT.")
-
-    # Check session exists and is not upcoming
-    sheet   = "ServiceRegister_db" if st == "SERVICE" else "EventsRegister_db"
-    date_f  = "DATE" if st == "SERVICE" else "EVENT_DATE"
+    sheet  = SH_SERVICES if st == "SERVICE" else SH_EVENTS
+    date_f = "DATE" if st == "SERVICE" else "EVENT_DATE"
     title_f = "SERMON_TOPIC" if st == "SERVICE" else "EVENT_TITLE"
     records = sheet_to_list(sheet)
-    session = next((r for r in records if str(r.get("S_N", "")).strip() == session_id), None)
+    session = next((r for r in records if str(r.get("S_N","")).strip() == session_id), None)
     if not session:
         raise HTTPException(404, f"{st} '{session_id}' not found.")
-    if _session_status(session.get(date_f, "")) == "UPCOMING":
-        raise HTTPException(400, "Attendance cannot be marked for upcoming sessions. "
-                                 "The session date has not passed yet.")
-
-    members = sheet_to_list("Members_db")
-    attendance = sheet_to_list("Attendance_db")
+    if _session_status(session.get(date_f,"")) == "UPCOMING":
+        raise HTTPException(400, "Attendance cannot be marked for upcoming sessions.")
+    members    = sheet_to_list(SH_MEMBERS)
+    attendance = sheet_to_list(SH_ATTENDANCE)
     present_sns = {
-        str(a.get("MEMBER_SN", "")).strip()
+        str(a.get("MEMBER_SN","")).strip()
         for a in attendance
-        if str(a.get("SESSION_ID", "")).strip() == session_id
-        and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"
+        if str(a.get("SESSION_ID","")).strip() == session_id
+        and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"
     }
-
+    name_key = "MEMBER_NAME" if members and "MEMBER_NAME" in members[0] else "FULL_NAME"
     return {
         "session_type":  st,
         "session_id":    session_id,
-        "session_date":  session.get(date_f, ""),
-        "session_title": session.get(title_f, "") or session.get("NATURE_OF_SERVICE", "")
-                         or session.get("EVENT_TITLE", ""),
+        "session_date":  session.get(date_f,""),
+        "session_title": session.get(title_f,"") or session.get("NATURE_OF_SERVICE","") or session.get("EVENT_TITLE",""),
         "roster": [
             {
-                "member_sn":         str(m.get("S_N", "")),
-                "profile_photo_url": m.get("PHOTO_URL", ""),
-                "member_name":       m.get("FULL_NAME", ""),
-                "phone":             m.get("PHONE_NUMBER", ""),
-                "department":        m.get("DEPARTMENT_1", m.get("DEPARTMENTS", "")),
-                "is_present":        str(m.get("S_N", "")).strip() in present_sns,
+                "member_sn":         str(m.get("S_N","")),
+                "profile_photo_url": m.get("PROFILE_PHOTO_URL", m.get("PHOTO_URL","")),
+                "member_name":       m.get(name_key,""),
+                "phone":             m.get("PHONE",""),
+                "department":        m.get("DEPARTMENT_1", m.get("DEPARTMENTS","")),
+                "is_present":        str(m.get("S_N","")).strip() in present_sns,
             }
             for m in members
         ]
     }
 
-
 @app.post("/api/attendance/mark", tags=["Attendance"])
-def mark_attendance(body: AttendanceMarkRequest,
-                    u: CurrentUser = Depends(get_current_user)):
-    """
-    Mark a list of members present for a session.
-    Idempotent — re-marking an already-present member is silently skipped.
-    Automatically recalculates and writes counts back to the parent record.
-    """
+def mark_attendance(body: AttendanceMarkRequest, u: CurrentUser = Depends(get_current_user)):
     st = body.session_type.upper()
-    if st not in ("SERVICE", "EVENT"):
+    if st not in ("SERVICE","EVENT"):
         raise HTTPException(400, "session_type must be SERVICE or EVENT.")
-
-    # Verify session exists and is not upcoming
-    sheet  = "ServiceRegister_db" if st == "SERVICE" else "EventsRegister_db"
-    date_f = "DATE" if st == "SERVICE" else "EVENT_DATE"
+    sheet   = SH_SERVICES if st == "SERVICE" else SH_EVENTS
+    date_f  = "DATE" if st == "SERVICE" else "EVENT_DATE"
     title_f = "SERMON_TOPIC" if st == "SERVICE" else "EVENT_TITLE"
     sessions = sheet_to_list(sheet)
-    session  = next((r for r in sessions
-                     if str(r.get("S_N", "")).strip() == body.session_id), None)
+    session  = next((r for r in sessions if str(r.get("S_N","")).strip() == body.session_id), None)
     if not session:
         raise HTTPException(404, f"{st} '{body.session_id}' not found.")
-    if _session_status(session.get(date_f, "")) == "UPCOMING":
+    if _session_status(session.get(date_f,"")) == "UPCOMING":
         raise HTTPException(400, "Cannot mark attendance for an upcoming session.")
-
-    members_map = {str(m.get("S_N", "")).strip(): m
-                   for m in sheet_to_list("Members_db")}
-    existing_att = sheet_to_list("Attendance_db")
+    members     = sheet_to_list(SH_MEMBERS)
+    name_key    = "MEMBER_NAME" if members and "MEMBER_NAME" in members[0] else "FULL_NAME"
+    members_map = {str(m.get("S_N","")).strip(): m for m in members}
+    existing_att = sheet_to_list(SH_ATTENDANCE)
     already_present = {
-        str(a.get("MEMBER_SN", "")).strip()
+        str(a.get("MEMBER_SN","")).strip()
         for a in existing_att
-        if str(a.get("SESSION_ID", "")).strip() == body.session_id
-        and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"
+        if str(a.get("SESSION_ID","")).strip() == body.session_id
+        and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"
     }
-
-    s_date  = session.get(date_f, "")
-    s_title = session.get(title_f, "") or session.get("NATURE_OF_SERVICE", "") \
-              or session.get("EVENT_TITLE", "")
+    s_date  = session.get(date_f,"")
+    s_title = session.get(title_f,"") or session.get("NATURE_OF_SERVICE","") or session.get("EVENT_TITLE","")
     ts      = now_str()
     newly   = 0
-
     for msn in body.member_sns:
         msn = str(msn).strip()
         if msn in already_present:
@@ -1048,171 +955,131 @@ def mark_attendance(body: AttendanceMarkRequest,
         member = members_map.get(msn)
         if not member:
             continue
-        cat = _derive_gender_category(member.get("SEX", ""), member.get("DATE_OF_BIRTH", ""))
-        sn  = next_sn("Attendance_db")
-        append_row("Attendance_db", [
+        cat = _derive_gender_category(member.get("SEX",""), member.get("DATE_OF_BIRTH",""))
+        sn  = next_sn(SH_ATTENDANCE)
+        append_row(SH_ATTENDANCE, [
             sn, st, body.session_id, s_date, s_title,
-            msn, member.get("FULL_NAME", ""), member.get("PHONE_NUMBER", ""),
-            member.get("DEPARTMENT_1", member.get("DEPARTMENTS", "")),
+            msn, member.get(name_key,""), member.get("PHONE",""),
+            member.get("DEPARTMENT_1", member.get("DEPARTMENTS","")),
             cat, "TRUE", ts, u.username, "AFC UTHIRU"
         ])
         newly += 1
-
     counts = _recalc_counts(body.session_id)
     _push_counts(st, body.session_id, counts)
     _audit(u.username, "MARK_ATTENDANCE", "ATTENDANCE", body.session_id,
            f"{newly} member(s) marked present")
     return {"status": "success", "newly_marked": newly, "counts": counts}
 
-
 @app.delete("/api/attendance/unmark", tags=["Attendance"])
-def unmark_attendance(body: AttendanceUnmarkRequest,
-                      u: CurrentUser = Depends(get_current_user)):
-    """Sets MARKED_PRESENT = FALSE — keeps audit row, recalculates counts."""
-    records = sheet_to_list("Attendance_db")
+def unmark_attendance(body: AttendanceUnmarkRequest, u: CurrentUser = Depends(get_current_user)):
+    records = sheet_to_list(SH_ATTENDANCE)
     target  = next(
         (a for a in records
-         if str(a.get("SESSION_ID", "")).strip() == body.session_id
-         and str(a.get("MEMBER_SN", "")).strip() == str(body.member_sn).strip()
-         and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"),
+         if str(a.get("SESSION_ID","")).strip() == body.session_id
+         and str(a.get("MEMBER_SN","")).strip() == str(body.member_sn).strip()
+         and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"),
         None
     )
     if not target:
-        raise HTTPException(404, "No active attendance record found for this member/session.")
-
-    # find sheet row
-    all_att = sheet_to_list("Attendance_db")
-    row_idx = next((i for i, a in enumerate(all_att)
-                    if str(a.get("S_N", "")).strip() == str(target.get("S_N", "")).strip()), None)
+        raise HTTPException(404, "No active attendance record found.")
+    row_idx = next((i for i, a in enumerate(records)
+                    if str(a.get("S_N","")).strip() == str(target.get("S_N","")).strip()), None)
     if row_idx is None:
         raise HTTPException(404, "Attendance row not found.")
-    update_cell("Attendance_db", row_idx + 2, "K", "FALSE")   # MARKED_PRESENT col
-
+    update_cell(SH_ATTENDANCE, HEADER_ROW + 1 + row_idx, "K", "FALSE")
     counts = _recalc_counts(body.session_id)
     _push_counts(body.session_type.upper(), body.session_id, counts)
     _audit(u.username, "UNMARK_ATTENDANCE", "ATTENDANCE", body.session_id,
            f"Member {body.member_sn} unmarked")
     return {"status": "success", "message": "Member unmarked.", "counts": counts}
 
-
 @app.get("/api/attendance/{session_id}/summary", tags=["Attendance"])
 def attendance_summary(session_id: str, _: CurrentUser = Depends(get_current_user)):
-    records = sheet_to_list("Attendance_db")
+    records = sheet_to_list(SH_ATTENDANCE)
     present = [a for a in records
-               if str(a.get("SESSION_ID", "")).strip() == session_id
-               and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"]
+               if str(a.get("SESSION_ID","")).strip() == session_id
+               and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"]
     counts  = _recalc_counts(session_id)
+    name_key = "MEMBER_NAME" if present and "MEMBER_NAME" in present[0] else "FULL_NAME"
     return {
-        "session_id": session_id,
-        "counts":     counts,
-        "attendees":  [
-            {"member_name": a.get("FULL_NAME", ""),
-             "phone":       a.get("PHONE_NUMBER", ""),
-             "department":  a.get("DEPARTMENT_1", "")}
+        "session_id": session_id, "counts": counts,
+        "attendees": [
+            {"member_name": a.get(name_key,""), "phone": a.get("PHONE",""),
+             "department": a.get("DEPARTMENT_1","")}
             for a in present
         ]
     }
 
 
 # ═══════════════════════════════════════════════════════════════
-# REPORTS  (returns structured JSON — front-end renders as PDF)
+# REPORTS
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/reports/service/{sn}", tags=["Reports"])
 def service_report(sn: str, _: CurrentUser = Depends(get_current_user)):
-    """
-    Full service report. Attendee list contains name, phone, department — NO photo.
-    Front-end uses this to render a downloadable PDF.
-    """
-    services = sheet_to_list("ServiceRegister_db")
-    service  = next((s for s in services if str(s.get("S_N", "")).strip() == sn), None)
+    services = sheet_to_list(SH_SERVICES)
+    service  = next((s for s in services if str(s.get("S_N","")).strip() == sn), None)
     if not service:
         raise HTTPException(404, f"Service '{sn}' not found.")
-
-    attendance = sheet_to_list("Attendance_db")
+    attendance = sheet_to_list(SH_ATTENDANCE)
+    name_key   = "MEMBER_NAME" if attendance and "MEMBER_NAME" in attendance[0] else "FULL_NAME"
     attendees  = [
-        {"member_name": a.get("FULL_NAME", ""),
-         "phone":       a.get("PHONE_NUMBER", ""),
-         "department":  a.get("DEPARTMENT_1", "")}
+        {"member_name": a.get(name_key,""), "phone": a.get("PHONE",""), "department": a.get("DEPARTMENT_1","")}
         for a in attendance
-        if str(a.get("SESSION_ID", "")).strip() == sn
-        and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"
+        if str(a.get("SESSION_ID","")).strip() == sn
+        and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"
     ]
-
     return {
         "report_type": "SERVICE",
         "service_details": {
-            "service_id":       sn,
-            "date":             service.get("DATE", ""),
-            "nature":           service.get("NATURE_OF_SERVICE", ""),
-            "opening_time":     service.get("OPENING_TIME", ""),
-            "closing_time":     service.get("CLOSING_TIME", ""),
-            "preacher":         service.get("PREACHER", ""),
-            "scripture":        service.get("SCRIPTURE_READING", ""),
-            "sermon_topic":     service.get("SERMON_TOPIC", ""),
-            "church_branch":    service.get("CHURCH_BRANCH", "AFC UTHIRU"),
-            "record_officer":   service.get("RECORD_OFFICER", ""),
+            "service_id": sn, "date": service.get("DATE",""),
+            "nature": service.get("NATURE_OF_SERVICE",""),
+            "opening_time": service.get("OPENING_TIME",""),
+            "closing_time": service.get("CLOSING_TIME",""),
+            "preacher": service.get("PREACHER",""),
+            "scripture": service.get("SCRIPTURE_READING",""),
+            "sermon_topic": service.get("SERMON_TOPIC",""),
+            "church_branch": service.get("CHURCH_BRANCH","AFC UTHIRU"),
+            "record_officer": service.get("RECORD_OFFICER",""),
         },
         "attendance_summary": {
-            "men":      service.get("ATTENDANCE_MEN", 0),
-            "women":    service.get("ATTENDANCE_WOMEN", 0),
-            "youth":    service.get("ATTENDANCE_YOUTH", 0),
-            "children": service.get("ATTENDANCE_CHILDREN", 0),
-            "total":    service.get("TOTAL_ATTENDANCE", 0),
+            "men": service.get("ATTENDANCE_MEN",0), "women": service.get("ATTENDANCE_WOMEN",0),
+            "youth": service.get("ATTENDANCE_YOUTH",0), "children": service.get("ATTENDANCE_CHILDREN",0),
+            "total": service.get("TOTAL_ATTENDANCE",0),
         },
-        "offerings_summary": {
-            "tithes":            service.get("TITHES", 0),
-            "offering":          service.get("OFFERING", 0),
-            "building_offering": service.get("BUILDING_OFFERING", 0),
-            "thanksgiving":      service.get("THANKSGIVING", 0),
-            "seed_offering":     service.get("SEED_OFFERING", 0),
-            "welfare_offering":  service.get("WELFARE_OFFERING", 0),
-            "other_offering":    service.get("OTHER_OFFERING", 0),
-            "total_offering":    service.get("TOTAL_OFFERING", 0),
-        },
-        "attendees": attendees,   # NO profile photo
+        "attendees": attendees,
     }
-
 
 @app.get("/api/reports/event/{sn}", tags=["Reports"])
 def event_report(sn: str, _: CurrentUser = Depends(get_current_user)):
-    """Full event report with attendee list (no photos)."""
-    events = sheet_to_list("EventsRegister_db")
-    event  = next((e for e in events if str(e.get("S_N", "")).strip() == sn), None)
+    events = sheet_to_list(SH_EVENTS)
+    event  = next((e for e in events if str(e.get("S_N","")).strip() == sn), None)
     if not event:
         raise HTTPException(404, f"Event '{sn}' not found.")
-
-    attendance = sheet_to_list("Attendance_db")
+    attendance = sheet_to_list(SH_ATTENDANCE)
+    name_key   = "MEMBER_NAME" if attendance and "MEMBER_NAME" in attendance[0] else "FULL_NAME"
     attendees  = [
-        {"member_name": a.get("FULL_NAME", ""),
-         "phone":       a.get("PHONE_NUMBER", ""),
-         "department":  a.get("DEPARTMENT_1", "")}
+        {"member_name": a.get(name_key,""), "phone": a.get("PHONE",""), "department": a.get("DEPARTMENT_1","")}
         for a in attendance
-        if str(a.get("SESSION_ID", "")).strip() == sn
-        and str(a.get("MARKED_PRESENT", "")).strip().upper() == "TRUE"
+        if str(a.get("SESSION_ID","")).strip() == sn
+        and str(a.get("MARKED_PRESENT","")).strip().upper() == "TRUE"
     ]
-
     return {
         "report_type": "EVENT",
         "event_details": {
-            "event_id":       sn,
-            "title":          event.get("EVENT_TITLE", ""),
-            "description":    event.get("EVENT_DESCRIPTION", ""),
-            "date":           event.get("EVENT_DATE", ""),
-            "time":           event.get("EVENT_TIME", ""),
-            "location":       event.get("EVENT_LOCATION", ""),
-            "targeted_group": event.get("TARGETED_GROUP", ""),
-            "pastor":         event.get("PASTOR_IN_CHARGE", ""),
-            "approved_by":    event.get("APPROVED_BY", ""),
-            "church_branch":  event.get("CHURCH_BRANCH", "AFC UTHIRU"),
-            "record_officer": event.get("RECORD_OFFICER", ""),
+            "event_id": sn, "title": event.get("EVENT_TITLE",""),
+            "description": event.get("EVENT_DESCRIPTION",""),
+            "date": event.get("EVENT_DATE",""), "time": event.get("EVENT_TIME",""),
+            "location": event.get("EVENT_LOCATION",""),
+            "targeted_group": event.get("TARGETED_GROUP",""),
+            "pastor": event.get("PASTOR_IN_CHARGE",""),
+            "church_branch": event.get("CHURCH_BRANCH","AFC UTHIRU"),
+            "record_officer": event.get("RECORD_OFFICER",""),
         },
         "attendance_summary": {
-            "men":      event.get("ATTENDANCE_MEN", 0),
-            "women":    event.get("ATTENDANCE_WOMEN", 0),
-            "youth":    event.get("ATTENDANCE_YOUTH", 0),
-            "children": event.get("ATTENDANCE_CHILDREN", 0),
-            "total":    event.get("TOTAL_ATTENDANCE", 0),
+            "men": event.get("ATTENDANCE_MEN",0), "women": event.get("ATTENDANCE_WOMEN",0),
+            "youth": event.get("ATTENDANCE_YOUTH",0), "children": event.get("ATTENDANCE_CHILDREN",0),
+            "total": event.get("TOTAL_ATTENDANCE",0),
         },
         "attendees": attendees,
     }
