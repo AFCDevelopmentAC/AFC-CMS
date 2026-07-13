@@ -1,0 +1,47 @@
+.sess-page { padding: 32px 36px 64px; max-width: 860px; margin: 0 auto; font-family: "Inter", sans-serif; }
+.sess-header { margin-bottom: 24px; }
+.sess-header h1 { font-size: 22px; font-weight: 700; color: #0F2A47; margin: 0 0 4px; }
+.sess-subtitle { font-size: 13.5px; color: #64748B; margin: 0; }
+
+/* Create cards */
+.sess-create-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px; }
+.sess-create-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 28px 20px; border-radius: 14px; border: 2px dashed #D7DEE7; background: #FBFCFE; cursor: pointer; transition: border-color .15s, background .15s, transform .1s; text-align: center; }
+.sess-create-card:hover:not(:disabled) { border-color: #00B4D8; background: #F0FBFF; transform: translateY(-2px); }
+.sess-create-card:disabled { opacity: .6; cursor: not-allowed; }
+.sess-create-card.loading { border-color: #00B4D8; background: #E8F9FF; }
+.sess-create-icon { font-size: 32px; }
+.sess-create-label { font-size: 15px; font-weight: 700; color: #0F2A47; }
+.sess-create-hint { font-size: 12px; color: #94A3B8; }
+
+/* Tabs */
+.sess-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.sess-tab { font-family: "Inter",sans-serif; font-size: 13px; padding: 7px 16px; border-radius: 8px; border: 1px solid #D7DEE7; background: #fff; color: #64748B; cursor: pointer; }
+.sess-tab.active { background: #00B4D8; color: #04212F; border-color: #00B4D8; font-weight: 600; }
+
+/* States */
+.sess-loading, .sess-empty { text-align: center; padding: 64px 0; font-size: 14px; color: #94A3B8; }
+
+/* List */
+.sess-list { display: flex; flex-direction: column; gap: 10px; }
+.sess-card { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-radius: 12px; border: 1px solid #E8EDF3; background: #fff; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.sess-card:hover { border-color: #00B4D8; box-shadow: 0 2px 12px rgba(0,180,216,.1); }
+.sess-card-left { display: flex; flex-direction: column; gap: 4px; }
+.sess-type-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; margin-bottom: 2px; width: fit-content; }
+.sess-type-service { background: #E8F4FD; color: #0284a8; }
+.sess-type-event { background: #F3E8FF; color: #7C3AED; }
+.sess-card-title { font-size: 15px; font-weight: 600; color: #0F2A47; }
+.sess-card-date { font-size: 13px; color: #64748B; }
+.sess-card-id { font-family: monospace; font-size: 11px; color: #94A3B8; }
+.sess-card-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.sess-status { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.sess-status-past { background: #E2EFDA; color: #1B5E20; }
+.sess-status-upcoming { background: #FFF8E1; color: #B45309; }
+.sess-att-count { display: flex; flex-direction: column; align-items: center; }
+.sess-att-num { font-size: 20px; font-weight: 700; color: #00B4D8; line-height: 1; }
+.sess-att-label { font-size: 10px; color: #94A3B8; text-transform: uppercase; letter-spacing: .04em; }
+.sess-chevron { font-size: 22px; color: #CBD5E1; }
+
+@media(max-width:600px){
+  .sess-page { padding: 20px 16px 60px; }
+  .sess-create-row { grid-template-columns: 1fr; }
+}

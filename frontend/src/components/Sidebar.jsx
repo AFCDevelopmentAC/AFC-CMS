@@ -34,8 +34,7 @@ export default function Sidebar() {
 
         <nav className="sidebar-nav">
           {link("/members",  "Members")}
-          {link("/services", "Services")}
-          {link("/events",   "Events")}
+          {link("/sessions", "Services & Events")}
           {user?.is_admin && link("/users", "Users")}
           {user?.is_admin && link("/audit", "Audit Trail")}
         </nav>

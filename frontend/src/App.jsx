@@ -4,9 +4,8 @@ import AppShell from "./components/AppShell";
 import Login from "./pages/Login";
 import Members from "./pages/Members";
 import Users from "./pages/Users";
-import Services from "./pages/Services";
-import Events from "./pages/Events";
-import AttendancePage from "./pages/AttendancePage";
+import Sessions from "./pages/Sessions";
+import SessionForm from "./pages/SessionForm";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Audit from "./pages/Audit";
@@ -37,11 +36,8 @@ export default function App() {
           {/* ── Protected (inside AppShell) ── */}
           <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route path="/members"  element={<Members />} />
-            <Route path="/services" element={<Services />} />
-            <Route path="/events"   element={<Events />} />
-
-            {/* Attendance — :sessionType = SERVICE|EVENT, :sessionId = SVC-... or EVT-... */}
-            <Route path="/attendance/:sessionType/:sessionId" element={<AttendancePage />} />
+            <Route path="/sessions" element={<Sessions />} />
+            <Route path="/sessions/:sessionId" element={<SessionForm />} />
 
             {/* Admin-only */}
             <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />
