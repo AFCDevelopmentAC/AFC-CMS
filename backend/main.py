@@ -22,10 +22,15 @@ from google.oauth2.service_account import Credentials
 app = FastAPI(title="AFC Uthiru CMS API", version="1.4.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://afc-cms.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    max_age=0,
 )
 
 CREDENTIALS_FILE = "afs-uthiru-cms-de0018a945c1.json"
