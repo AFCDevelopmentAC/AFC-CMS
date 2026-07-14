@@ -11,7 +11,7 @@ from typing import Optional
 
 import bcrypt
 import httpx
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
@@ -452,7 +452,7 @@ def _push_counts(session_type: str, session_id: str, counts: dict):
 # HEALTH
 # ═══════════════════════════════════════════════════════════════
 
-@app.get("/", tags=["Health"])
+@app.api_route("/", methods=["GET", "HEAD"], tags=["Health"])
 def root():
     return {"status": "online", "system": "AFC Uthiru CMS API v1.4"}
 
