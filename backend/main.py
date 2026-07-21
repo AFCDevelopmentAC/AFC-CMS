@@ -1,6 +1,6 @@
 """
 AFC Uthiru Church Management System — FastAPI Sync Engine
-v1.4 — Fixed header row (row 6), correct sheet names, full feature set.
+v1.5 — Explicit OPTIONS handler, CORS fix, HEAD support for UptimeRobot.
 """
 
 import os
@@ -11,27 +11,51 @@ from typing import Optional
 
 import bcrypt
 import httpx
-from fastapi import FastAPI, HTTPException, Depends, Response
+from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel
 from googleapiclient.discovery import build
 from google.oauth2.service_account import Credentials
 
-app = FastAPI(title="AFC Uthiru CMS API", version="1.4.0")
+app = FastAPI(title="AFC Uthiru CMS API", version="1.5.0")
+
+ALLOWED_ORIGINS = [
+    "https://afc-cms.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://afc-cms.vercel.app",
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],
-    max_age=0,
+    expose_headers=["*"],
+    max_age=600,
 )
+
+
+# ── Explicit OPTIONS handler — catches any preflight the middleware misses ──
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
+    origin = request.headers.get("origin", "")
+    if origin in ALLOWED_ORIGINS:
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Max-Age": "600",
+            }
+        )
+    return Response(status_code=403)
+
 
 CREDENTIALS_FILE = "afs-uthiru-cms-de0018a945c1.json"
 SPREADSHEET_ID   = os.environ.get("SPREADSHEET_ID", "1tX_G4wlCKKRuPVPr-jy5f992jnmlp0y_3s-yd-UNkTs")
@@ -43,9 +67,8 @@ RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "re_T48XHsER_78VVzPcxUNCiJEQ
 RESEND_FROM      = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 FRONTEND_URL     = os.environ.get("FRONTEND_URL", "https://afc-cms.vercel.app")
 
-# ── Sheet name constants (single source of truth) ────────────────
 SH_USERS       = "Users_db"
-SH_MEMBERS     = "MemberDetails_db"      # ← correct sheet name
+SH_MEMBERS     = "MemberDetails_db"
 SH_DEPARTMENTS = "Departments_db"
 SH_MEMBER_DEPT = "MemberDepartments_db"
 SH_SERVICES    = "ServiceRegister_db"
@@ -54,7 +77,6 @@ SH_ATTENDANCE  = "Attendance_db"
 SH_AUDIT       = "AuditLog_db"
 SH_RESET       = "ResetTokens_db"
 
-# All sheets have headers on row 6, data from row 7
 HEADER_ROW = 6
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -76,7 +98,6 @@ def _service():
 
 
 def sheet_to_list(sheet_name: str, header_row: int = HEADER_ROW) -> list[dict]:
-    """Read sheet into list of dicts. Headers are on header_row (default 6)."""
     try:
         result = _service().spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
@@ -218,7 +239,7 @@ def _get_user(username: str) -> dict | None:
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUDIT TRAIL  (defined early — used everywhere)
+# AUDIT TRAIL
 # ═══════════════════════════════════════════════════════════════
 
 def _audit(username: str, action: str, module: str, item_id: str, description: str):
@@ -345,7 +366,7 @@ class AttendanceUnmarkRequest(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════
-# EMAIL  (Resend)
+# EMAIL
 # ═══════════════════════════════════════════════════════════════
 
 def send_email(to: str, subject: str, html: str) -> bool:
@@ -364,13 +385,12 @@ def send_email(to: str, subject: str, html: str) -> bool:
 def email_welcome(to: str, full_name: str, username: str, password: str):
     send_email(to, "Your AFC Uthiru CMS Account", f"""
     <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;background:#fff;border-radius:12px;border:1px solid #e2e8f0">
-      <div style="background:#00B4D8;color:#04212F;width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;margin-bottom:20px;padding:0 8px">AFC</div>
       <h2 style="color:#0F2A47;margin:0 0 8px">Welcome, {full_name}</h2>
-      <p style="color:#64748B;margin:0 0 24px">Your account on the AFC Uthiru CMS has been created.</p>
+      <p style="color:#64748B;margin:0 0 24px">Your account has been created.</p>
       <div style="background:#F0F4F8;border-radius:8px;padding:16px 20px;margin-bottom:24px">
-        <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;text-transform:uppercase">Username</p>
+        <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600">USERNAME</p>
         <p style="margin:0 0 16px;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{username}</p>
-        <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600;text-transform:uppercase">Temporary password</p>
+        <p style="margin:0 0 8px;color:#475569;font-size:13px;font-weight:600">PASSWORD</p>
         <p style="margin:0;color:#0F2A47;font-size:18px;font-weight:700;font-family:monospace">{password}</p>
       </div>
       <a href="{FRONTEND_URL}/login" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px">Sign in now</a>
@@ -380,8 +400,8 @@ def email_reset(to: str, full_name: str, token: str):
     reset_url = f"{FRONTEND_URL}/reset-password?token={token}"
     send_email(to, "AFC Uthiru CMS - Password Reset", f"""
     <div style="font-family:Inter,sans-serif;max-width:520px;margin:auto;padding:32px;background:#fff;border-radius:12px;border:1px solid #e2e8f0">
-      <h2 style="color:#0F2A47;margin:0 0 8px">Password reset request</h2>
-      <p style="color:#64748B;margin:0 0 24px">Hi {full_name}, click below to reset your password. Expires in 1 hour.</p>
+      <h2 style="color:#0F2A47;margin:0 0 8px">Password reset</h2>
+      <p style="color:#64748B;margin:0 0 24px">Hi {full_name}, click below. Expires in 1 hour.</p>
       <a href="{reset_url}" style="display:inline-block;background:#00B4D8;color:#04212F;font-weight:700;text-decoration:none;padding:12px 24px;border-radius:8px">Reset my password</a>
     </div>""")
 
@@ -454,7 +474,7 @@ def _push_counts(session_type: str, session_id: str, counts: dict):
 
 @app.api_route("/", methods=["GET", "HEAD"], tags=["Health"])
 def root():
-    return {"status": "online", "system": "AFC Uthiru CMS API v1.4"}
+    return {"status": "online", "system": "AFC Uthiru CMS API v1.5"}
 
 @app.get("/api/test-connection", tags=["Health"])
 def test_connection():
@@ -712,7 +732,7 @@ def list_departments(_: CurrentUser = Depends(get_current_user)):
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUDIT ENDPOINTS
+# AUDIT
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/audit", tags=["Audit"])
@@ -763,17 +783,13 @@ def create_service(body: ServiceIn, u: CurrentUser = Depends(get_current_user)):
     append_row(SH_SERVICES, [
         sn, body.date, body.opening_time, body.closing_time,
         body.nature_of_service, body.preacher, body.scripture_reading, body.sermon_topic,
-        0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         status, u.username, body.church_branch
     ])
-    _audit(u.username, "CREATE_SERVICE", "SERVICES", sn,
-           f"Created {status} service on {body.date}")
+    _audit(u.username, "CREATE_SERVICE", "SERVICES", sn, f"Created {status} service on {body.date}")
     return {
         "status": "success", "service_id": sn, "session_status": status,
-        "message": f"Service '{sn}' created." +
-                   (" Attendance can now be marked." if status == "PAST"
-                    else " Attendance available after the service date.")
+        "message": f"Service '{sn}' created."
     }
 
 @app.put("/api/services/{sn}", tags=["Services"])
@@ -843,9 +859,7 @@ def create_event(body: EventIn, u: CurrentUser = Depends(get_current_user)):
            f"Created {status} event '{body.event_title}' on {body.event_date}")
     return {
         "status": "success", "event_id": sn, "session_status": status,
-        "message": f"Event '{sn}' created." +
-                   (" Attendance can now be marked." if status == "PAST"
-                    else " Attendance available after the event date.")
+        "message": f"Event '{sn}' created."
     }
 
 @app.put("/api/events/{sn}", tags=["Events"])
@@ -889,8 +903,8 @@ def get_roster(session_type: str, session_id: str, _: CurrentUser = Depends(get_
     st = session_type.upper()
     if st not in ("SERVICE","EVENT"):
         raise HTTPException(400, "session_type must be SERVICE or EVENT.")
-    sheet  = SH_SERVICES if st == "SERVICE" else SH_EVENTS
-    date_f = "DATE" if st == "SERVICE" else "EVENT_DATE"
+    sheet   = SH_SERVICES if st == "SERVICE" else SH_EVENTS
+    date_f  = "DATE" if st == "SERVICE" else "EVENT_DATE"
     title_f = "SERMON_TOPIC" if st == "SERVICE" else "EVENT_TITLE"
     records = sheet_to_list(sheet)
     session = next((r for r in records if str(r.get("S_N","")).strip() == session_id), None)
