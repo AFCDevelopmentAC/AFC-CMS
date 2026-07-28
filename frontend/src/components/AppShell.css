@@ -1,18 +1,30 @@
 .app-shell {
   display: flex;
   min-height: 100vh;
-  background: #F0F4F8;
+  background: #F7FAFC;
+  font-family: "Inter", sans-serif;
 }
 
 .app-content {
   flex: 1;
   min-width: 0;
-  margin-left: 220px;
+  overflow-y: auto;
 }
 
-@media (max-width: 860px) {
-  .app-content {
-    margin-left: 0;
-    padding-top: 56px;
-  }
+/* Top navigation progress bar */
+.nav-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #00B4D8, #0284a8);
+  border-radius: 0 2px 2px 0;
+  z-index: 10000;
+  animation: nav-prog 1.4s ease-in-out infinite;
+}
+
+@keyframes nav-prog {
+  0%   { width: 0%;   opacity: 1; }
+  70%  { width: 85%;  opacity: 1; }
+  100% { width: 100%; opacity: 0; }
 }
