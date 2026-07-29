@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import AppShell from "./components/AppShell";
@@ -23,28 +24,38 @@ function AdminRoute({ children }) {
   return children;
 }
 
+function WakeUpPing() {
+  useEffect(() => {
+    // Fire-and-forget ping to wake Render backend on app load
+    const url = import.meta.env.VITE_API_BASE_URL || "https://afc-cms.onrender.com";
+    fetch(`${url}/`).catch(() => {});
+  }, []);
+  return null;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <WakeUpPing />
         <Routes>
-          {/* ── Public ── */}
+          {/* Public */}
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* ── Protected (inside AppShell) ── */}
+          {/* Protected inside AppShell */}
           <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
             <Route path="/members"  element={<Members />} />
             <Route path="/sessions" element={<Sessions />} />
             <Route path="/sessions/:sessionId" element={<SessionForm />} />
 
-            {/* Admin-only */}
+            {/* Admin only */}
             <Route path="/users" element={<AdminRoute><Users /></AdminRoute>} />
             <Route path="/audit" element={<AdminRoute><Audit /></AdminRoute>} />
           </Route>
 
-          {/* ── Fallback ── */}
+          {/* Fallback */}
           <Route path="*" element={<Navigate to="/members" replace />} />
         </Routes>
       </BrowserRouter>
