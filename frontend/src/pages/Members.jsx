@@ -688,37 +688,92 @@ export default function Members() {
               </div>
             </div>
 
-            <dl className="member-detail-grid">
-              <Detail label="Phone"            value={selectedMember.PHONE} />
-              <Detail label="Email"            value={selectedMember.EMAIL} />
-              <Detail label="Physical address" value={selectedMember.PHYSICAL_ADDRESS} />
-              <Detail label="Area / location"  value={selectedMember.AREA_DESCRIPTION} />
-              <Detail label="Home church"      value={selectedMember.HOME_CHURCH} />
-              <Detail label="Sex"              value={selectedMember.SEX} />
-              <Detail label="Marital status"   value={selectedMember.MARITAL_STATUS} />
-              <Detail label="Date of birth"    value={selectedMember.DATE_OF_BIRTH} />
-              <Detail label="Occupation"       value={selectedMember.OCCUPATION} />
-              <Detail label="Date joined"      value={selectedMember.DATE_JOINED} />
-              <Detail label="Membership status" value={selectedMember.MEMBERSHIP_STATUS} />
-              <Detail label="Membership number" value={selectedMember.MEMBERSHIP_NUMBER} />
-              <Detail label="Spouse"           value={selectedMember.SPOUSE_NAME} />
-              <Detail label="No. of children"  value={selectedMember.NO_OF_CHILDREN} />
-              <Detail label="Conversion date"  value={selectedMember.CONVERSION_DATE} />
-              <Detail label="Baptism date"     value={selectedMember.BAPTISM_DATE} />
-              <Detail label="Received Holy Spirit" value={selectedMember.HOLY_SPIRIT_RECEIVED} />
-              <Detail label="Holy Spirit date" value={selectedMember.HOLY_SPIRIT_DATE} />
-            </dl>
+           <dl className="member-detail-grid">
+  <Detail 
+    label="Phone" 
+    value={selectedMember.PHONE || selectedMember.phone || selectedMember.phone_number} 
+  />
+  <Detail 
+    label="Email" 
+    value={selectedMember.EMAIL || selectedMember.email} 
+  />
+  <Detail 
+    label="Physical address" 
+    value={selectedMember.PHYSICAL_ADDRESS || selectedMember.residence || selectedMember.address} 
+  />
+  <Detail 
+    label="Area / location" 
+    value={selectedMember.AREA_DESCRIPTION || selectedMember.area || selectedMember.location} 
+  />
+  <Detail 
+    label="Home church" 
+    value={selectedMember.HOME_CHURCH || selectedMember.home_church} 
+  />
+  <Detail 
+    label="Sex" 
+    value={selectedMember.SEX || selectedMember.sex || selectedMember.gender} 
+  />
+  <Detail 
+    label="Marital status" 
+    value={selectedMember.MARITAL_STATUS || selectedMember.marital_status} 
+  />
+  <Detail 
+    label="Date of birth" 
+    value={selectedMember.DATE_OF_BIRTH || selectedMember.date_of_birth || selectedMember.dob} 
+  />
+  <Detail 
+    label="Occupation" 
+    value={selectedMember.OCCUPATION || selectedMember.occupation} 
+  />
+  <Detail 
+    label="Date joined" 
+    value={selectedMember.DATE_JOINED || selectedMember.date_joined || selectedMember.created_at} 
+  />
+  <Detail 
+    label="Membership status" 
+    value={selectedMember.MEMBERSHIP_STATUS || selectedMember.membership_status || selectedMember.status} 
+  />
+  <Detail 
+    label="Membership number" 
+    value={selectedMember.MEMBERSHIP_NUMBER || selectedMember.membership_number || selectedMember.member_number} 
+  />
+  <Detail 
+    label="Spouse" 
+    value={selectedMember.SPOUSE_NAME || selectedMember.spouse || selectedMember.spouse_name} 
+  />
+  <Detail 
+    label="No. of children" 
+    value={selectedMember.NO_OF_CHILDREN ?? selectedMember.number_of_children} 
+  />
+  <Detail 
+    label="Conversion date" 
+    value={selectedMember.CONVERSION_DATE || selectedMember.conversion_date} 
+  />
+  <Detail 
+    label="Baptism date" 
+    value={selectedMember.BAPTISM_DATE || selectedMember.baptism_date} 
+  />
+  <Detail 
+    label="Received Holy Spirit" 
+    value={selectedMember.HOLY_SPIRIT_RECEIVED || selectedMember.received_holy_spirit || selectedMember.holy_spirit_received} 
+  />
+  <Detail 
+    label="Holy Spirit date" 
+    value={selectedMember.HOLY_SPIRIT_DATE || selectedMember.holy_spirit_date} 
+  />
+</dl>
 
-            {(selectedMember.NOK_NAME || selectedMember.NOK_PHONE) && (
-              <div className="nok-section">
-                <h3 className="nok-title">Next of kin</h3>
-                <dl className="member-detail-grid">
-                  <Detail label="Name"         value={selectedMember.NOK_NAME} />
-                  <Detail label="Relationship" value={selectedMember.NOK_RELATIONSHIP} />
-                  <Detail label="Phone"        value={selectedMember.NOK_PHONE} />
-                  <Detail label="Address"      value={selectedMember.NOK_ADDRESS} />
-                </dl>
-              </div>
+           {(selectedMember.NOK_NAME || selectedMember.nok_name || selectedMember.NOK_PHONE || selectedMember.nok_phone) && (
+  <div className="nok-section">
+    <h3 className="nok-title">Next of kin</h3>
+    <dl className="member-detail-grid">
+      <Detail label="Name"         value={selectedMember.NOK_NAME || selectedMember.nok_name} />
+      <Detail label="Relationship" value={selectedMember.NOK_RELATIONSHIP || selectedMember.nok_relationship} />
+      <Detail label="Phone"        value={selectedMember.NOK_PHONE || selectedMember.nok_phone} />
+      <Detail label="Address"      value={selectedMember.NOK_ADDRESS || selectedMember.nok_address} />
+    </dl>
+  </div>
+)}
             )}
           </div>
         </div>
