@@ -32,30 +32,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
+    allow_methods=["*"],  # Allows GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD automatically
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600,
 )
-
-
-# ── Explicit OPTIONS handler — catches any preflight the middleware misses ──
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str, request: Request):
-    origin = request.headers.get("origin", "")
-    if origin in ALLOWED_ORIGINS:
-        return Response(
-            status_code=200,
-            headers={
-                "Access-Control-Allow-Origin": origin,
-                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-                "Access-Control-Max-Age": "600",
-            }
-        )
-    return Response(status_code=403)
-
 
 CREDENTIALS_FILE = "afs-uthiru-cms-de0018a945c1.json"
 SPREADSHEET_ID   = os.environ.get("SPREADSHEET_ID", "1tX_G4wlCKKRuPVPr-jy5f992jnmlp0y_3s-yd-UNkTs")
