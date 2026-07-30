@@ -688,19 +688,6 @@ export default function Members() {
               </div>
             </div>
 
-            {/* TEMPORARY DEBUGGER - Remove after checking */}
-<pre style={{
-  background: "#1e293b", 
-  color: "#38bdf8", 
-  padding: "12px", 
-  borderRadius: "8px", 
-  fontSize: "11px", 
-  overflowX: "auto",
-  marginBottom: "16px"
-}}>
-  {JSON.stringify(selectedMember, null, 2)}
-</pre>
-
               <dl className="member-detail-grid">
   <Detail 
     label="Phone" 
