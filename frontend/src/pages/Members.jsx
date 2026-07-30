@@ -773,7 +773,7 @@ export default function Members() {
       <Detail label="Address"      value={selectedMember.NOK_ADDRESS || selectedMember.nok_address} />
     </dl>
   </div>
-)}
+
             )}
           </div>
         </div>
