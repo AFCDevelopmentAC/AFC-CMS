@@ -60,7 +60,7 @@ SCOPES           = ["https://www.googleapis.com/auth/spreadsheets"]
 SECRET_KEY       = os.environ.get("SECRET_KEY", "CHANGE-THIS-BEFORE-PRODUCTION-AFC-UTHIRU")
 ALGORITHM        = "HS256"
 TOKEN_EXPIRY_MIN = 480
-RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "re_T48XHsER_78VVzPcxUNCiJEQRV52fDUTK")
+RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM      = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 FRONTEND_URL     = os.environ.get("FRONTEND_URL", "https://afc-cms.vercel.app")
 
