@@ -353,7 +353,7 @@ export default function Members() {
                 <label htmlFor="MEMBER_NAME">Full name *</label>
                 <input id="MEMBER_NAME" value={form.MEMBER_NAME}
                   onChange={(e) => updateField("MEMBER_NAME", e.target.value)}
-                  placeholder="e.g. Joseph Gichimu" required />
+                  placeholder="e.g. Omondi Timon" required />
               </div>
 
               <div className="form-field">
@@ -455,10 +455,9 @@ export default function Members() {
                 <label htmlFor="MEMBERSHIP_STATUS">Membership status</label>
                 <select id="MEMBERSHIP_STATUS" value={form.MEMBERSHIP_STATUS}
                   onChange={(e) => updateField("MEMBERSHIP_STATUS", e.target.value)}>
-                  <option value="ACTIVE MEMBER">Active member</option>
-                  <option value="OFFICER">Officer</option>
-                  <option value="NEW CONVERT">New convert</option>
-                  <option value="INACTIVE">Inactive</option>
+                  <option value="ACTIVE MEMBER">Member</option>
+                  <option value="NEW CONVERT">New member</option>
+                  <option value="INACTIVE">Visitor</option>
                 </select>
               </div>
 
@@ -525,7 +524,7 @@ export default function Members() {
                 <label htmlFor="NOK_NAME">Full name</label>
                 <input id="NOK_NAME" value={form.NOK_NAME}
                   onChange={(e) => updateField("NOK_NAME", e.target.value)}
-                  placeholder="e.g. Mary Gichimu" />
+                  placeholder="e.g. Mary Kamau" />
               </div>
 
               <div className="form-field">
