@@ -32,27 +32,30 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],  # Allows GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD automatically
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "HEAD"],
     allow_headers=["*"],
     expose_headers=["*"],
     max_age=600,
 )
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+
+# ── Explicit OPTIONS handler — catches any preflight the middleware misses ──
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str, request: Request):
     origin = request.headers.get("origin", "")
-    headers = {}
     if origin in ALLOWED_ORIGINS:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true"
-        headers["Access-Control-Allow-Headers"] = "*"
-        headers["Access-Control-Allow-Methods"] = "*"
-        
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Internal Server Error: {str(exc)}"},
-        headers=headers
-    )
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": origin,
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH, HEAD",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+                "Access-Control-Max-Age": "600",
+            }
+        )
+    return Response(status_code=403)
+
 
 CREDENTIALS_FILE = "afs-uthiru-cms-de0018a945c1.json"
 SPREADSHEET_ID   = os.environ.get("SPREADSHEET_ID", "1tX_G4wlCKKRuPVPr-jy5f992jnmlp0y_3s-yd-UNkTs")
@@ -304,27 +307,29 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 class MemberModel(BaseModel):
-    membership_number: Optional[str] = ""
-    full_name: str
-    phone_number: Optional[str] = ""
-    email: Optional[str] = ""
-    sex: str
-    marital_status: str
-    date_of_birth: Optional[str] = ""
-    residence: Optional[str] = ""
-    landmark: Optional[str] = ""
-    occupation: Optional[str] = ""
-    membership_status: str = "ACTIVE"
-    spouse_name: Optional[str] = ""
-    no_of_children: Optional[str] = "0"
-    conversion_date: Optional[str] = ""
-    baptism_date: Optional[str] = ""
+    membership_number:    Optional[str] = ""
+    full_name:            str
+    phone_number:         Optional[str] = ""
+    email:                Optional[str] = ""
+    sex:                  str
+    marital_status:       str
+    date_of_birth:        Optional[str] = ""
+    residence:            Optional[str] = ""   # PHYSICAL_ADDRESS
+    landmark:             Optional[str] = ""   # AREA_DESCRIPTION
+    home_church:          Optional[str] = "AFC UTHIRU"  # HOME_CHURCH (col 6)
+    occupation:           Optional[str] = ""
+    membership_status:    str = "ACTIVE MEMBER"
+    spouse_name:          Optional[str] = ""
+    no_of_children:       Optional[str] = "0"
+    conversion_date:      Optional[str] = ""
+    baptism_date:         Optional[str] = ""
     holy_spirit_received: str = "NO"
-    holy_spirit_date: Optional[str] = ""
-    nok_name: Optional[str] = ""
-    nok_relationship: Optional[str] = ""
-    nok_phone: Optional[str] = ""
-    photo_url: Optional[str] = ""
+    holy_spirit_date:     Optional[str] = ""
+    nok_name:             Optional[str] = ""
+    nok_relationship:     Optional[str] = ""
+    nok_phone:            Optional[str] = ""
+    nok_address:          Optional[str] = ""   # NOK_ADDRESS (col 26)
+    photo_url:            Optional[str] = ""
     departments: list[str] = []
 
 class OverrideDeptRequest(BaseModel):
