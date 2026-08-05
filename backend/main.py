@@ -63,7 +63,7 @@ SCOPES           = ["https://www.googleapis.com/auth/spreadsheets"]
 SECRET_KEY       = os.environ.get("SECRET_KEY", "CHANGE-THIS-BEFORE-PRODUCTION-AFC-UTHIRU")
 ALGORITHM        = "HS256"
 TOKEN_EXPIRY_MIN = 480
-RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "")
+RESEND_API_KEY   = os.environ.get("RESEND_API_KEY", "re_T48XHsER_78VVzPcxUNCiJEQRV52fDUTK")
 RESEND_FROM      = os.environ.get("RESEND_FROM", "onboarding@resend.dev")
 FRONTEND_URL     = os.environ.get("FRONTEND_URL", "https://afc-cms.vercel.app")
 
@@ -648,13 +648,34 @@ def add_member(m: MemberModel, u: CurrentUser = Depends(get_current_user)):
     if dept1 not in all_depts:
         all_depts.insert(0, dept1)
     append_row(SH_MEMBERS, [
-        sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
-        m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence,
-        m.landmark, m.occupation, m.membership_status.upper(), m.spouse_name,
-        m.no_of_children, m.conversion_date, m.baptism_date,
-        m.holy_spirit_received.upper(), m.holy_spirit_date,
-        m.nok_name, m.nok_relationship, m.nok_phone,
-        m.photo_url, dept1, ",".join(all_depts), now_str()
+        sn,                                                    # C1  S_N
+        m.photo_url,                                           # C2  PROFILE_PHOTO_URL
+        m.full_name.strip(),                                   # C3  MEMBER_NAME
+        m.residence,                                           # C4  PHYSICAL_ADDRESS
+        m.landmark,                                            # C5  AREA_DESCRIPTION
+        m.home_church or "AFC UTHIRU",                         # C6  HOME_CHURCH
+        m.phone_number,                                        # C7  PHONE
+        m.email,                                               # C8  EMAIL
+        m.sex.upper() if m.sex else "",                        # C9  SEX
+        m.marital_status.upper() if m.marital_status else "",  # C10 MARITAL_STATUS
+        m.date_of_birth,                                       # C11 DATE_OF_BIRTH
+        m.occupation,                                          # C12 OCCUPATION
+        dept1,                                                 # C13 DEPARTMENT_1
+        "",                                                    # C14 DATE_JOINED
+        m.membership_status.upper() if m.membership_status else "ACTIVE MEMBER",  # C15
+        m.membership_number,                                   # C16 MEMBERSHIP_NUMBER
+        m.spouse_name,                                         # C17 SPOUSE_NAME
+        m.conversion_date,                                     # C18 CONVERSION_DATE
+        m.no_of_children,                                      # C19 NO_OF_CHILDREN
+        m.baptism_date,                                        # C20 BAPTISM_DATE
+        m.holy_spirit_received.upper() if m.holy_spirit_received else "NO",  # C21
+        m.holy_spirit_date,                                    # C22 HOLY_SPIRIT_DATE
+        m.nok_name,                                            # C23 NOK_NAME
+        m.nok_relationship,                                    # C24 NOK_RELATIONSHIP
+        m.nok_phone,                                           # C25 NOK_PHONE
+        m.nok_address,                                         # C26 NOK_ADDRESS
+        u.username,                                            # C27 RECORD_OFFICER
+        now_str(),                                             # C28 LAST_UPDATED
     ])
     _audit(u.username, "ADD_MEMBER", "MEMBERS", str(sn), f"Registered '{m.full_name}' — dept: {dept1}")
     return {"detail": "Member registered.", "sn": sn, "department_1": dept1}
@@ -671,13 +692,34 @@ def update_member(sn: str, m: MemberModel, u: CurrentUser = Depends(get_current_
         all_depts.insert(0, dept1)
     sheet_row = HEADER_ROW + 1 + row_idx
     update_row(SH_MEMBERS, sheet_row, [
-        sn, m.membership_number, m.full_name.strip(), m.phone_number, m.email,
-        m.sex.upper(), m.marital_status.upper(), m.date_of_birth, m.residence,
-        m.landmark, m.occupation, m.membership_status.upper(), m.spouse_name,
-        m.no_of_children, m.conversion_date, m.baptism_date,
-        m.holy_spirit_received.upper(), m.holy_spirit_date,
-        m.nok_name, m.nok_relationship, m.nok_phone,
-        m.photo_url, dept1, ",".join(all_depts), now_str()
+        sn,                                                    # C1  S_N
+        m.photo_url,                                           # C2  PROFILE_PHOTO_URL
+        m.full_name.strip(),                                   # C3  MEMBER_NAME
+        m.residence,                                           # C4  PHYSICAL_ADDRESS
+        m.landmark,                                            # C5  AREA_DESCRIPTION
+        m.home_church or "AFC UTHIRU",                         # C6  HOME_CHURCH
+        m.phone_number,                                        # C7  PHONE
+        m.email,                                               # C8  EMAIL
+        m.sex.upper() if m.sex else "",                        # C9  SEX
+        m.marital_status.upper() if m.marital_status else "",  # C10 MARITAL_STATUS
+        m.date_of_birth,                                       # C11 DATE_OF_BIRTH
+        m.occupation,                                          # C12 OCCUPATION
+        dept1,                                                 # C13 DEPARTMENT_1
+        "",                                                    # C14 DATE_JOINED
+        m.membership_status.upper() if m.membership_status else "ACTIVE MEMBER",  # C15
+        m.membership_number,                                   # C16 MEMBERSHIP_NUMBER
+        m.spouse_name,                                         # C17 SPOUSE_NAME
+        m.conversion_date,                                     # C18 CONVERSION_DATE
+        m.no_of_children,                                      # C19 NO_OF_CHILDREN
+        m.baptism_date,                                        # C20 BAPTISM_DATE
+        m.holy_spirit_received.upper() if m.holy_spirit_received else "NO",  # C21
+        m.holy_spirit_date,                                    # C22 HOLY_SPIRIT_DATE
+        m.nok_name,                                            # C23 NOK_NAME
+        m.nok_relationship,                                    # C24 NOK_RELATIONSHIP
+        m.nok_phone,                                           # C25 NOK_PHONE
+        m.nok_address,                                         # C26 NOK_ADDRESS
+        u.username,                                            # C27 RECORD_OFFICER
+        now_str(),                                             # C28 LAST_UPDATED
     ])
     _audit(u.username, "UPDATE_MEMBER", "MEMBERS", sn, f"Updated '{m.full_name}'")
     return {"detail": "Member updated.", "department_1": dept1}
@@ -710,14 +752,34 @@ def override_department(sn: str, req: OverrideDeptRequest, u: CurrentUser = Depe
     sheet_row = HEADER_ROW + 1 + row_idx
     name_key  = "MEMBER_NAME" if "MEMBER_NAME" in m else "FULL_NAME"
     update_row(SH_MEMBERS, sheet_row, [
-        m.get("S_N",sn), m.get("MEMBERSHIP_NUMBER",""), m.get(name_key,""),
-        m.get("PHONE",""), m.get("EMAIL",""), m.get("SEX",""),
-        m.get("MARITAL_STATUS",""), m.get("DATE_OF_BIRTH",""), m.get("RESIDENCE",""),
-        m.get("LANDMARK",""), m.get("OCCUPATION",""), m.get("MEMBERSHIP_STATUS",""),
-        m.get("SPOUSE_NAME",""), m.get("NO_OF_CHILDREN",""), m.get("CONVERSION_DATE",""),
-        m.get("BAPTISM_DATE",""), m.get("HOLY_SPIRIT_RECEIVED",""), m.get("HOLY_SPIRIT_DATE",""),
-        m.get("NOK_NAME",""), m.get("NOK_RELATIONSHIP",""), m.get("NOK_PHONE",""),
-        m.get("PHOTO_URL",""), new_dept, ",".join(depts), now_str()
+        m.get("S_N", sn),                    # C1  S_N
+        m.get("PROFILE_PHOTO_URL",""),        # C2  PROFILE_PHOTO_URL
+        m.get("MEMBER_NAME",""),              # C3  MEMBER_NAME
+        m.get("PHYSICAL_ADDRESS",""),         # C4  PHYSICAL_ADDRESS
+        m.get("AREA_DESCRIPTION",""),         # C5  AREA_DESCRIPTION
+        m.get("HOME_CHURCH","AFC UTHIRU"),    # C6  HOME_CHURCH
+        m.get("PHONE",""),                    # C7  PHONE
+        m.get("EMAIL",""),                    # C8  EMAIL
+        m.get("SEX",""),                      # C9  SEX
+        m.get("MARITAL_STATUS",""),           # C10 MARITAL_STATUS
+        m.get("DATE_OF_BIRTH",""),            # C11 DATE_OF_BIRTH
+        m.get("OCCUPATION",""),               # C12 OCCUPATION
+        new_dept,                             # C13 DEPARTMENT_1 (overridden)
+        m.get("DATE_JOINED",""),              # C14 DATE_JOINED
+        m.get("MEMBERSHIP_STATUS",""),        # C15 MEMBERSHIP_STATUS
+        m.get("MEMBERSHIP_NUMBER",""),        # C16 MEMBERSHIP_NUMBER
+        m.get("SPOUSE_NAME",""),              # C17 SPOUSE_NAME
+        m.get("CONVERSION_DATE",""),          # C18 CONVERSION_DATE
+        m.get("NO_OF_CHILDREN",""),           # C19 NO_OF_CHILDREN
+        m.get("BAPTISM_DATE",""),             # C20 BAPTISM_DATE
+        m.get("HOLY_SPIRIT_RECEIVED",""),     # C21 HOLY_SPIRIT_RECEIVED
+        m.get("HOLY_SPIRIT_DATE",""),         # C22 HOLY_SPIRIT_DATE
+        m.get("NOK_NAME",""),                 # C23 NOK_NAME
+        m.get("NOK_RELATIONSHIP",""),         # C24 NOK_RELATIONSHIP
+        m.get("NOK_PHONE",""),                # C25 NOK_PHONE
+        m.get("NOK_ADDRESS",""),              # C26 NOK_ADDRESS
+        u.username,                           # C27 RECORD_OFFICER
+        now_str(),                            # C28 LAST_UPDATED
     ])
     _audit(u.username, "OVERRIDE_DEPARTMENT", "MEMBERS", sn,
            f"Overrode dept to '{new_dept}' for '{m.get(name_key,'')}'")
